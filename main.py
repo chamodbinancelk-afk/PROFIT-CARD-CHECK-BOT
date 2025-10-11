@@ -49,43 +49,66 @@ def write_last_headline(filename, headline):
 # ... (fetch_forexfactory_news සහ fetch_cnbc_news යන functions වෙනස් කර නැත) ...
 
 # --- Send Telegram ---
+# --- Send Telegram (නිවැරදි කරන ලද) ---
+# --- Send Telegram (Translate Error Handling) ---
 def send_telegram_news(headline, news_url, img_url, source):
-    # ... (මෙම function එක වෙනස් නොකර තැබිය හැක) ...
     try:
         news_resp = requests.get(news_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
         news_resp.raise_for_status()
         news_soup = BeautifulSoup(news_resp.content, 'html.parser')
-        # CNBC/FF මත පදනම්ව tag එක වෙනස් විය හැකි නිසා පළමු ඡේදය සොයා ගැනීමට උත්සාහ කරන්න
-        # ඔබට නිවැරදි විස්තරය ලබා ගැනීමට අවශ්‍ය නම්, එක් එක් source එක සඳහා detail page එකේ structure එක හොඳින් පරීක්ෂා කළ යුතුය.
-        desc_tag = news_soup.find('p') or news_soup.find('div', class_=lambda c: c and 'article-content' in c) or news_soup.find('div')
         
-        # Strip කර, හිස්තැන් ඉවත් කර, අක්ෂර 500ට සීමා කරයි
-        description = desc_tag.get_text(strip=True).replace('\n', ' ')[:500].strip() if desc_tag else "No description found."
-    except Exception as e:
-        # logging.error(f"Failed to fetch description for {source}: {e}") # මෙය තවදුරටත් debug කිරීම සඳහා වැදගත් විය හැක
+        # --- විස්තරය (Description) ලබා ගන්නා කොටස ---
         description = "No description found."
-        
-    try:
-        description_si = translator.translate(description, dest='si').text
-    except Exception:
-        description_si = "සිංහල පරිවර්තනය අසාර්ථක විය."
+        desc_tag = None
 
+        if source == "Forex Factory":
+            desc_tag = news_soup.find('p', class_='news__copy')
+        elif source == "CNBC":
+            # CNBC වැනි අනෙකුත් වෙබ් අඩවි සඳහා නම්‍යශීලී සෙවීම
+            desc_tag = news_soup.find('p') or news_soup.find('div', class_=lambda c: c and 'article-content' in c)
+
+        if desc_tag:
+            description = desc_tag.get_text(strip=True).replace('\n', ' ')[:500].strip()
+        
+    except Exception as e:
+        logging.error(f"Failed to fetch or parse description for {source} at {news_url}: {e}")
+        description = "No description found. (විස්තරය ලබා ගැනීමේ දෝෂයක්)"
+
+
+    # --- සිංහල පරිවර්තනය නිවැරදි කළ කොටස ---
+    description_si = "සිංහල පරිවර්තනය අසාර්ථක විය." # Default message
+
+    # description හිස් නම්, පරිවර්තනය කිරීමට උත්සාහ නොකරයි.
+    if description and description != "No description found." and "No description found. (" not in description:
+        try:
+            # පරිවර්තනය කිරීමේදී ඇතිවිය හැකි ඕනෑම දෝෂයක් මෙයින් අල්ලා ගනී.
+            translation_result = translator.translate(description, dest='si')
+            description_si = translation_result.text
+            
+        except Exception as e:
+            # පරිවර්තන දෝෂය logging කර, default පණිවිඩය භාවිත කරයි.
+            logging.error(f"Translation failed for news from {source}. Error: {e}")
+            description_si = "සිංහල පරිවර්තනය අසාර්ථක විය. (දෝෂය: " + str(e)[:30] + "...)"
+
+
+    # ඉතිරි කෝඩ් එක (වේලාව සහ ටෙලිග්‍රාම් පණිවිඩය යැවීම) එලෙසම පවත්වා ගනී
     sri_lanka_tz = pytz.timezone('Asia/Colombo')
     now = datetime.now(sri_lanka_tz)
     date_time = now.strftime('%Y-%m-%d %I:%M %p')
 
     message = f"""📰 *Fundamental News (සිංහල)*
+    
 
 ⏰ *Date & Time:* {date_time}
-🌍 *Source:* {source}
 
-🧠 *Headline:* {headline}
+🌍 *Headline:* {headline}
+
 
 🔥 *සිංහල:* {description_si}
 
 🔗 *Read more:* {news_url}
 
-🚀 *Dev :* Mr Chamo 🇱🇰
+🚀 *Dev : Mr Chamo 🇱🇰*
 """
 
     try:
@@ -96,7 +119,6 @@ def send_telegram_news(headline, news_url, img_url, source):
         logging.info(f"Posted news from {source}: {headline}")
     except Exception as e:
         logging.error(f"Failed to send message: {e}")
-
 
 # --- Main Loop ---
 if __name__ == "__main__":
