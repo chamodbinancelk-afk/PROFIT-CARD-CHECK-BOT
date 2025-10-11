@@ -104,10 +104,16 @@ def fetch_latest_news():
     cnbc_headline, cnbc_url, cnbc_img = fetch_cnbc_news()
 
     sources = []
-    if ff_headline and ff_headline != last:
-        sources.append((ff_headline, ff_url, ff_img, "Forex Factory"))
-    if cnbc_headline and cnbc_headline != last:
-        sources.append((cnbc_headline, cnbc_url, cnbc_img, "CNBC"))
+
+    if ff_headline:
+        ff_headline_clean = ff_headline.strip()
+        if ff_headline_clean != last:
+            sources.append((ff_headline_clean, ff_url, ff_img, "Forex Factory"))
+
+    if cnbc_headline:
+        cnbc_headline_clean = cnbc_headline.strip()
+        if cnbc_headline_clean != last:
+            sources.append((cnbc_headline_clean, cnbc_url, cnbc_img, "CNBC"))
 
     if not sources:
         logging.info("No new news found, skipping.")
@@ -117,7 +123,6 @@ def fetch_latest_news():
     headline, url, img, source = sources[0]
     write_last_headline(headline)
     send_telegram_news(headline, url, img, source)
-            break
 
 def send_telegram_news(headline, news_url, img_url, source):
     headers = {'User-Agent': 'Mozilla/5.0'}
