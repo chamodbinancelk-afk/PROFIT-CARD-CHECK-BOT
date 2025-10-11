@@ -104,19 +104,19 @@ def fetch_latest_news():
     cnbc_headline, cnbc_url, cnbc_img = fetch_cnbc_news()
 
     sources = []
-    if ff_headline:
+    if ff_headline and ff_headline != last:
         sources.append((ff_headline, ff_url, ff_img, "Forex Factory"))
-    if cnbc_headline:
+    if cnbc_headline and cnbc_headline != last:
         sources.append((cnbc_headline, cnbc_url, cnbc_img, "CNBC"))
 
     if not sources:
-        logging.warning("No news found from either source!")
+        logging.info("No new news found, skipping.")
         return
 
-    for headline, url, img, source in sources:
-        if headline != last:
-            write_last_headline(headline)
-            send_telegram_news(headline, url, img, source)
+    # Only send the first new headline
+    headline, url, img, source = sources[0]
+    write_last_headline(headline)
+    send_telegram_news(headline, url, img, source)
             break
 
 def send_telegram_news(headline, news_url, img_url, source):
