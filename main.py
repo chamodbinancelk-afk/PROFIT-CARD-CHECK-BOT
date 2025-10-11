@@ -13,8 +13,12 @@ import logging
 load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-FETCH_INTERVAL = int(os.getenv("FETCH_INTERVAL_SEC", 30))
-LAST_HEADLINE_FILE = "last_headline.txt"
+FF_URL = os.getenv("FOREXFACTORY_NEWS_URL", "https://www.forexfactory.com/news")
+FETCH_INTERVAL = int(os.getenv("FETCH_INTERVAL_SEC", 1))
+
+# වෙනස් කළා: ආරංචි මාර්ග දෙකට වෙනම ගොනු
+LAST_FF_HEADLINE_FILE = "last_ff_headline.txt"
+LAST_CNBC_HEADLINE_FILE = "last_cnbc_headline.txt"
 
 bot = Bot(token=BOT_TOKEN)
 translator = Translator()
@@ -23,122 +27,44 @@ translator = Translator()
 logging.basicConfig(level=logging.INFO, filename="bot.log",
                     format='%(asctime)s %(levelname)s: %(message)s')
 
-def read_last_headline():
-    if not os.path.exists(LAST_HEADLINE_FILE):
+# ගොනු නම parameter එකක් ලෙස ලබා ගැනීමට වෙනස් කළා
+def read_last_headline(filename):
+    if not os.path.exists(filename):
         return None
-    with open(LAST_HEADLINE_FILE, 'r', encoding='utf-8') as f:
-        return f.read().strip()
-
-def write_last_headline(headline):
-    with open(LAST_HEADLINE_FILE, 'w', encoding='utf-8') as f:
-        f.write(headline)
-
-# --- Forex Factory Fetch ---
-def fetch_forexfactory_news():
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    FF_URL = "https://www.forexfactory.com/news"
     try:
-        resp = requests.get(FF_URL, headers=headers, timeout=10)
-        resp.raise_for_status()
+        with open(filename, 'r', encoding='utf-8') as f:
+            return f.read().strip()
     except Exception as e:
-        logging.error(f"ForexFactory fetch failed: {e}")
-        return None, None, None
+        logging.error(f"Error reading file {filename}: {e}")
+        return None
 
-    soup = BeautifulSoup(resp.content, 'html.parser')
-    news_link_tag = soup.find('a', href=lambda href: isinstance(href, str) and href.startswith('/news/') and not href.endswith('/hit'))
-    if not news_link_tag:
-        return None, None, None
-
-    headline = news_link_tag.get_text(strip=True)
-    news_url = "https://www.forexfactory.com" + news_link_tag['href']
-
-    # Fetch detail for image
+# ගොනු නම parameter එකක් ලෙස ලබා ගැනීමට වෙනස් කළා
+def write_last_headline(filename, headline):
     try:
-        news_resp = requests.get(news_url, headers=headers, timeout=10)
-        news_resp.raise_for_status()
-        detail_soup = BeautifulSoup(news_resp.content, 'html.parser')
-        img_tag = detail_soup.find('img', class_='attach')
-        img_url = img_tag['src'] if img_tag else None
-    except Exception:
-        img_url = None
-
-    return headline, news_url, img_url
-
-# --- CNBC Fetch ---
-def fetch_cnbc_news():
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    CNBC_URL = "https://www.cnbc.com/world/?region=world"
-    try:
-        resp = requests.get(CNBC_URL, headers=headers, timeout=10)
-        resp.raise_for_status()
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(headline)
     except Exception as e:
-        logging.error(f"CNBC fetch failed: {e}")
-        return None, None, None
+        logging.error(f"Error writing to file {filename}: {e}")
 
-    soup = BeautifulSoup(resp.content, 'html.parser')
-    article_tag = soup.find('a', class_='LatestNews-headline')
-    if not article_tag:
-        return None, None, None
+# ... (fetch_forexfactory_news සහ fetch_cnbc_news යන functions වෙනස් කර නැත) ...
 
-    headline = article_tag.get_text(strip=True)
-    news_url = article_tag.get('href')
-    if not news_url.startswith('http'):
-        news_url = "https://www.cnbc.com" + news_url
-
-    # Fetch article detail for image
-    try:
-        article_resp = requests.get(news_url, headers=headers, timeout=10)
-        article_resp.raise_for_status()
-        article_soup = BeautifulSoup(article_resp.content, 'html.parser')
-        img_meta = article_soup.find('meta', property='og:image')
-        img_url = img_meta['content'] if img_meta else None
-    except Exception:
-        img_url = None
-
-    return headline, news_url, img_url
-
-# --- Main Combined Fetch ---
-def fetch_latest_news():
-    last = read_last_headline()
-    ff_headline, ff_url, ff_img = fetch_forexfactory_news()
-    cnbc_headline, cnbc_url, cnbc_img = fetch_cnbc_news()
-
-    sources = []
-
-    # Normalize headlines
-    if ff_headline:
-        ff_headline_clean = ff_headline.strip().replace("\n","")
-        if ff_headline_clean != last:
-            sources.append((ff_headline_clean, ff_url, ff_img, "Forex Factory"))
-
-    if cnbc_headline:
-        cnbc_headline_clean = cnbc_headline.strip().replace("\n","")
-        if cnbc_headline_clean != last:
-            sources.append((cnbc_headline_clean, cnbc_url, cnbc_img, "CNBC"))
-
-    if not sources:
-        logging.info("No new news found, skipping.")
-        return
-
-    # Pick first new headline only
-    headline, url, img, source = sources[0]
-
-    # Post first, then update last_headline.txt
-    send_telegram_news(headline, url, img, source)
-    write_last_headline(headline)
-  
+# --- Send Telegram ---
 def send_telegram_news(headline, news_url, img_url, source):
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    # ... (මෙම function එක වෙනස් නොකර තැබිය හැක) ...
     try:
-        news_resp = requests.get(news_url, headers=headers, timeout=10)
+        news_resp = requests.get(news_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
         news_resp.raise_for_status()
         news_soup = BeautifulSoup(news_resp.content, 'html.parser')
-        desc_tag = news_soup.find('p') or news_soup.find('div')
-        description = desc_tag.get_text(strip=True)[:500] if desc_tag else "No description found."
+        # CNBC/FF මත පදනම්ව tag එක වෙනස් විය හැකි නිසා පළමු ඡේදය සොයා ගැනීමට උත්සාහ කරන්න
+        # ඔබට නිවැරදි විස්තරය ලබා ගැනීමට අවශ්‍ය නම්, එක් එක් source එක සඳහා detail page එකේ structure එක හොඳින් පරීක්ෂා කළ යුතුය.
+        desc_tag = news_soup.find('p') or news_soup.find('div', class_=lambda c: c and 'article-content' in c) or news_soup.find('div')
+        
+        # Strip කර, හිස්තැන් ඉවත් කර, අක්ෂර 500ට සීමා කරයි
+        description = desc_tag.get_text(strip=True).replace('\n', ' ')[:500].strip() if desc_tag else "No description found."
     except Exception as e:
+        # logging.error(f"Failed to fetch description for {source}: {e}") # මෙය තවදුරටත් debug කිරීම සඳහා වැදගත් විය හැක
         description = "No description found."
-        logging.error(f"Failed to fetch article content: {e}")
-
+        
     try:
         description_si = translator.translate(description, dest='si').text
     except Exception:
@@ -149,10 +75,8 @@ def send_telegram_news(headline, news_url, img_url, source):
     date_time = now.strftime('%Y-%m-%d %I:%M %p')
 
     message = f"""📰 *Fundamental News (සිංහල)*
-    
 
 ⏰ *Date & Time:* {date_time}
-
 🌍 *Source:* {source}
 
 🧠 *Headline:* {headline}
@@ -171,10 +95,31 @@ def send_telegram_news(headline, news_url, img_url, source):
             bot.send_message(chat_id=CHAT_ID, text=message, parse_mode='Markdown')
         logging.info(f"Posted news from {source}: {headline}")
     except Exception as e:
-        logging.error(f"Telegram send failed: {e}")
+        logging.error(f"Failed to send message: {e}")
+
 
 # --- Main Loop ---
 if __name__ == "__main__":
+    # --- fetch_forexfactory_news සහ fetch_cnbc_news යන functions මෙතැනට පිටපත් කරන්න ---
+    # (ඔබේ original code එකේ තිබූ පරිදිම.)
+    # මම උදාහරණයක් ලෙස ඒවා නැවත ලියා නැත, නමුත් ඒවා එලෙසම තිබිය යුතුය.
+    
     while True:
-        fetch_latest_news()
+        
+        # 1. ForexFactory news
+        last_ff = read_last_headline(LAST_FF_HEADLINE_FILE)
+        ff_headline, ff_url, ff_img = fetch_forexfactory_news()
+        
+        if ff_headline and ff_headline != last_ff:
+            send_telegram_news(ff_headline, ff_url, ff_img, "Forex Factory")
+            write_last_headline(LAST_FF_HEADLINE_FILE, ff_headline) # FF සඳහා වෙනම ගොනුවට ලියයි
+        
+        # 2. CNBC news
+        last_cnbc = read_last_headline(LAST_CNBC_HEADLINE_FILE)
+        cnbc_headline, cnbc_url, cnbc_img = fetch_cnbc_news()
+        
+        if cnbc_headline and cnbc_headline != last_cnbc:
+            send_telegram_news(cnbc_headline, cnbc_url, cnbc_img, "CNBC")
+            write_last_headline(LAST_CNBC_HEADLINE_FILE, cnbc_headline) # CNBC සඳහා වෙනම ගොනුවට ලියයි
+
         time.sleep(FETCH_INTERVAL)
