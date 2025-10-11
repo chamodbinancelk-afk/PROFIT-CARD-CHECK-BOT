@@ -13,7 +13,7 @@ import logging
 load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-FETCH_INTERVAL = int(os.getenv("FETCH_INTERVAL_SEC", 1))
+FETCH_INTERVAL = int(os.getenv("FETCH_INTERVAL_SEC", 30))
 LAST_HEADLINE_FILE = "last_headline.txt"
 
 bot = Bot(token=BOT_TOKEN)
@@ -105,15 +105,14 @@ def fetch_latest_news():
 
     sources = []
 
-    # Normalize and check ForexFactory
+    # Normalize headlines
     if ff_headline:
-        ff_headline_clean = ff_headline.strip().replace("\n", "")
+        ff_headline_clean = ff_headline.strip().replace("\n","")
         if ff_headline_clean != last:
             sources.append((ff_headline_clean, ff_url, ff_img, "Forex Factory"))
 
-    # Normalize and check CNBC
     if cnbc_headline:
-        cnbc_headline_clean = cnbc_headline.strip().replace("\n", "")
+        cnbc_headline_clean = cnbc_headline.strip().replace("\n","")
         if cnbc_headline_clean != last:
             sources.append((cnbc_headline_clean, cnbc_url, cnbc_img, "CNBC"))
 
@@ -121,10 +120,12 @@ def fetch_latest_news():
         logging.info("No new news found, skipping.")
         return
 
-    # Only send first new headline
+    # Pick first new headline only
     headline, url, img, source = sources[0]
-    write_last_headline(headline)
+
+    # Post first, then update last_headline.txt
     send_telegram_news(headline, url, img, source)
+    write_last_headline(headline)
   
 def send_telegram_news(headline, news_url, img_url, source):
     headers = {'User-Agent': 'Mozilla/5.0'}
