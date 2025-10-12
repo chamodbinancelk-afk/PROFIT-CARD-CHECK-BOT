@@ -1,5 +1,5 @@
 import { Telegraf } from 'telegraf';
-import cheerio from 'cheerio';
+import { load } from 'cheerio';
 import moment from 'moment-timezone';
 
 // 🚨 Cloudflare Workers වලදී, Node.js ගොනු පද්ධතිය (fs) සහ path භාවිතා කළ නොහැක.
@@ -17,7 +17,6 @@ const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Cloudflare Worker)' };
  */
 async function readLastHeadlineKV(env) {
     try {
-        // NEWS_STATE යනු wrangler.toml හි නිර්වචනය කළ KV binding එකයි.
         const last = await env.NEWS_STATE.get(LAST_HEADLINE_KEY);
         return last;
     } catch (e) {
@@ -51,7 +50,6 @@ async function translateText(text) {
     try {
         const response = await fetch(translationApiUrl);
         const data = await response.json();
-        // Google Translate API හි ප්‍රතිචාරයෙන් පරිවර්තනය කළ කොටස පමණක් ලබා ගනී
         return data[0].map(item => item[0]).join('');
     } catch (e) {
         console.error('Translation API Error. Using original text.', e);
@@ -66,7 +64,6 @@ async function translateText(text) {
  */
 async function fetchLatestNews(env) {
     const lastHeadline = await readLastHeadlineKV(env);
-
     const bot = new Telegraf(env.BOT_TOKEN);
     const chatId = env.CHAT_ID;
 
@@ -81,7 +78,7 @@ async function fetchLatestNews(env) {
     }
 
     const html = await resp.text();
-    const $ = cheerio.load(html); // Cheerio භාවිතයෙන් HTML parse කිරීම
+    const $ = load(html); // ✅ Fixed cheerio import
 
     // 2. Find the latest news
     const newsLinkTag = $('a[href^="/news/"][href$=""]')
@@ -115,7 +112,7 @@ async function fetchLatestNews(env) {
     }
 
     const newsHtml = await newsResp.text();
-    const $detail = cheerio.load(newsHtml);
+    const $detail = load(newsHtml); // ✅ Fixed cheerio import
 
     // Get Image URL
     const imgTag = $detail('img.attach');
@@ -152,10 +149,8 @@ async function fetchLatestNews(env) {
 }
 
 // --- Cloudflare Worker Export ---
-
 export default {
     // 🚨 1. Scheduled Handler (Cron Trigger)
-    // මෙය while(true) loop එක ප්‍රතිස්ථාපනය කරයි.
     async scheduled(event, env, ctx) {
         ctx.waitUntil(fetchLatestNews(env));
     },
@@ -168,7 +163,6 @@ export default {
         }
         
         // 🚨 3. Webhook Handling (If you want to use user commands too)
-        // Note: For a publishing bot, the scheduled handler is the primary focus.
         if (request.method === 'POST') {
              try {
                 const bot = new Telegraf(env.BOT_TOKEN);
@@ -184,3 +178,4 @@ export default {
         return new Response('Bot Worker is running in Scheduled Mode. Access /status to check last run.', { status: 200 });
     }
 };
+
