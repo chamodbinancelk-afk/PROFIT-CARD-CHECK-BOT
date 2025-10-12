@@ -8,173 +8,232 @@ const TELEGRAM_TOKEN = '8299929776:AAGKU7rkfakmDBXdgiGSWzAHPgLRJs-twZg';
 // 🚨🚨 CRITICAL: පණිවිඩ ලැබිය යුතු CHAT ID එක මෙහි ඇතුල් කරන්න! 🚨🚨
 const CHAT_ID = '-1003177936060'; 
 
-async function sendRawTelegramMessage(chatId, text) {
-    const apiURL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
-    
+// Cloudflare Worker - Forex Factory News Scraper with Sinhala Translation
+// This worker uses raw fetch for maximum compatibility in the Workers environment.
+
+
+const LAST_HEADLINE_KEY = 'last_forex_headline';
+const FF_URL = "https://www.forexfactory.com/news";
+const COLOMBO_TIMEZONE = 'Asia/Colombo';
+const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Cloudflare Worker)' };
+
+
+/**
+ * Utility function to send raw messages via Telegram API.
+ * This function handles both text and photo messages.
+ * @param {string} chatId The target chat ID.
+ * @param {string} message The message text (caption).
+ * @param {string|null} [imgUrl=null] Image URL to send as a photo.
+ */
+async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
     if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN') {
         console.error("TELEGRAM_TOKEN is missing or not updated.");
         return;
     }
     
+    let apiMethod = 'sendMessage';
+    let payload = {
+        chat_id: chatId,
+        parse_mode: 'HTML' // We use HTML for robust formatting
+    };
+
+    if (imgUrl) {
+        apiMethod = 'sendPhoto';
+        payload.photo = imgUrl;
+        payload.caption = message; // Message becomes the caption
+    } else {
+        payload.text = message;
+    }
+
+    const apiURL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/${apiMethod}`;
+    
     try {
-        await fetch(apiURL, {
+        const response = await fetch(apiURL, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                chat_id: chatId,
-                text: text,
-                parse_mode: 'HTML' 
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`Telegram API Error (${apiMethod}): ${response.status} - ${errorText}`);
+        }
     } catch (error) {
         console.error("Error sending message to Telegram:", error);
     }
 }
 
-// --- Scheduled News Scraping Logic ---
 
-/**
- * Scrapes the latest news article from the configured URL using the most general selectors.
- */
-async function getLatestNews() {
-    const url = 'https://www.ft.lk/news-list'; 
-    
-    const response = await fetch(url);
-    const html = await response.text();
-    const $ = cheerio.load(html);
+// --- KV Helpers ---
 
-    // 🚨 NEW Selector targeting the link and surrounding content based on the updated structure.
-    const articleLinkElement = $('.cat-list-box .list-details-left-side-heading a').first(); 
-    
-    if (articleLinkElement.length === 0) {
-        return null; // Link element not found
-    }
-
-    const title = articleLinkElement.text().trim();
-    const link = articleLinkElement.attr('href');
-    
-    // Find the content text which is usually the element right after the heading container
-    const contentElement = articleLinkElement
-        .closest('.list-details-left-side-heading') // Go up to the heading container
-        .parent() // Go up to the column row
-        .find('.list-details-left-side-text') // Find the text in the same column row
-        .first();
-
-    const content = contentElement.text().trim();
-    
-    if (!title || !link || link.startsWith('#')) {
-         return null;
-    }
-
-    return {
-        title: title,
-        link: 'https://www.ft.lk' + link,
-        content: content.substring(0, 150) + '...'
-    };
-}
-
-
-/**
- * Main logic executed by the Cron Trigger (scheduled event).
- */
-async function handleScheduled(env) {
-    const debugChatId = CHAT_ID; 
-    
+async function readLastHeadlineKV(env) {
     try {
-        const latestNews = await getLatestNews();
-        
-        if (!latestNews) {
-            // ⚠️ SCRAPE FAILED Message
-            await sendRawTelegramMessage(debugChatId, "⚠️ **SCRAPE FAILED:** Could not find articles (Selector Issue). The website HTML structure may have changed again.");
-            console.log("No new articles found or scrape failed.");
-            return;
-        }
-
-        const newsLink = latestNews.link;
-
-        // Check KV to prevent duplicate sending (KV binding is still needed)
-        const lastSentLink = await env.NEWS_STATE.get("last_sent_link");
-
-        if (lastSentLink === newsLink) {
-            // 🟢 SUCCESS (No New) Message
-            await sendRawTelegramMessage(debugChatId, `🟢 **SUCCESS (No New):** Article is a duplicate: <a href="${newsLink}">Click to view</a>`);
-            console.log(`Article already sent: ${newsLink}`);
-            return;
-        }
-
-        // Construct and send the NEW news message
-        const message = `<b>📰 Latest News Update 📰</b>\n\n` +
-                        `<b>${latestNews.title}</b>\n\n` +
-                        `${latestNews.content}\n\n` +
-                        `<a href="${newsLink}">Read Full Article</a>`;
-        
-        await sendRawTelegramMessage(CHAT_ID, message);
-
-        // Update KV with the new link
-        await env.NEWS_STATE.put("last_sent_link", newsLink);
-
-        console.log(`Successfully sent new article: ${latestNews.title}`);
-        // ✅ SUCCESS (NEW) Message
-        await sendRawTelegramMessage(debugChatId, `✅ **SUCCESS (NEW):** Deployed new article: <b>${latestNews.title}</b>`);
-
-    } catch (error) {
-        console.error("An error occurred during scheduled task:", error);
-        // ❌ CRITICAL ERROR Message
-        await sendRawTelegramMessage(debugChatId, `❌ **CRITICAL DEPLOYMENT ERROR:** ${error.message}`);
+        const last = await env.NEWS_STATE.get(LAST_HEADLINE_KEY);
+        return last;
+    } catch (e) {
+        console.error('KV Read Error:', e);
+        return null;
     }
 }
 
-// --- Worker Export Handlers (Combined) ---
+async function writeLastHeadlineKV(env, headline) {
+    try {
+        await env.NEWS_STATE.put(LAST_HEADLINE_KEY, headline);
+    } catch (e) {
+        console.error('KV Write Error:', e);
+    }
+}
 
+// --- Translation Function (SYNTAX FIXED) ---
+
+async function translateText(text) {
+    // 🚨 FIX: Corrected template literal syntax (missing backticks)
+    const translationApiUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=si&dt=t&q=${encodeURIComponent(text)}`;
+    try {
+        const response = await fetch(translationApiUrl);
+        const data = await response.json();
+        // Extracting and joining translated segments
+        return data[0].map(item => item[0]).join('');
+    } catch (e) {
+        console.error('Translation API Error. Using original text.', e);
+        return `[Translation Failed: ${text}]`;
+    }
+}
+
+// --- Main Scraping Logic ---
+
+async function fetchLatestNews(env) {
+    const debugChatId = CHAT_ID;
+    
+    // 1. Check for last sent headline
+    const lastHeadline = await readLastHeadlineKV(env);
+
+    // 2. Fetch News Page
+    let resp;
+    try {
+        resp = await fetch(FF_URL, { headers: HEADERS });
+        if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+    } catch (e) {
+        // Send critical error to user if fetch fails
+        await sendRawTelegramMessage(debugChatId, `❌ CRITICAL FETCH ERROR: Failed to access Forex Factory: ${e.message}`);
+        return;
+    }
+
+    const html = await resp.text();
+    const $ = load(html);
+
+    // 3. Find the latest news link tag
+    // Selector targets the link tag starting with /news/ and not ending with /hit
+    const newsLinkTag = $('a[href^="/news/"]').not('a[href$="/hit"]').first();
+
+    if (newsLinkTag.length === 0) {
+        await sendRawTelegramMessage(debugChatId, "⚠️ SCRAPE FAILED: Could not find any news headlines on Forex Factory.");
+        console.warn("News element not found!");
+        return;
+    }
+
+    const headline = newsLinkTag.text().trim();
+    if (headline === lastHeadline) {
+        await sendRawTelegramMessage(debugChatId, `🟢 SUCCESS (No New): Headline is a duplicate. Last: ${headline}`);
+        console.info(`No new headline. Last: ${headline}`);
+        return;
+    }
+
+    // 4. New headline found: Save and fetch details
+    await writeLastHeadlineKV(env, headline);
+    console.info(`New headline detected: ${headline}`);
+
+    const newsUrl = "https://www.forexfactory.com" + newsLinkTag.attr('href');
+    
+    let newsResp;
+    try {
+        newsResp = await fetch(newsUrl, { headers: HEADERS });
+        if (!newsResp.ok) throw new Error(`HTTP error! status: ${newsResp.status}`);
+    } catch (e) {
+        await sendRawTelegramMessage(debugChatId, `❌ DETAIL FETCH ERROR: Failed to fetch news detail page: ${e.message}`);
+        return;
+    }
+
+    const newsHtml = await newsResp.text();
+    const $detail = load(newsHtml);
+
+    // Get Image URL
+    const imgTag = $detail('img.attach');
+    const imgUrl = imgTag.length ? imgTag.attr('src') : null;
+
+    // Get Description
+    const descTag = $detail('p.news__copy');
+    const description = descTag.length ? descTag.text().trim() : "No description found.";
+
+    // 5. Translate Content
+    const headline_si = await translateText(headline);
+    const description_si = await translateText(description);
+
+    const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
+
+    // Message using HTML for robust formatting
+    const message = `<b>📰 Fundamental News (සිංහල)</b>\n\n` +
+                    `<b>⏰ Date & Time:</b> ${date_time}\n\n` +
+                    `<b>🌎 Headline (English):</b> ${headline}\n\n` +
+                    `<b>🔥 සිංහල:</b> ${description_si}\n\n` +
+                    `<a href="${newsUrl}">Read Full Article</a>\n\n` +
+                    `🚀 <i>Dev: Mr Chamo 🇱🇰</i>`;
+
+    // 6. Send to Telegram (uses raw fetch)
+    try {
+        await sendRawTelegramMessage(CHAT_ID, message, imgUrl);
+        await sendRawTelegramMessage(debugChatId, `✅ SUCCESS (NEW): Deployed new article: <b>${headline}</b>`);
+        console.info(`Successfully posted: ${headline}`);
+    } catch (e) {
+        await sendRawTelegramMessage(debugChatId, `❌ CRITICAL POST ERROR: Failed to send message to Telegram: ${e.message}`);
+        console.error(`Failed to send message to Telegram: ${e}`);
+    }
+}
+
+// --- Cloudflare Worker Export ---
 export default {
-    /**
-     * Handles incoming HTTP requests (Manual trigger and Telegram webhooks)
-     */
-    async fetch(request, env) {
+    // 1. Scheduled Handler (Cron Trigger)
+    async scheduled(event, env, ctx) {
+        // Use ctx.waitUntil to ensure the task finishes
+        ctx.waitUntil(fetchLatestNews(env));
+    },
+
+    // 2. Fetch Handler (Webhook and Status)
+    async fetch(request, env, ctx) {
         const url = new URL(request.url);
-        
-        // 1. Handle Manual Trigger (for debugging the scheduled task)
+
+        // Manual trigger for testing the scheduled task
         if (url.pathname === '/trigger') {
-            await handleScheduled(env);
+            await fetchLatestNews(env);
             return new Response("Scheduled task manually triggered and executed. Check Telegram for debug status.", { status: 200 });
         }
+        
+        // Status check to see the last headline
+        if (url.pathname === '/status') {
+            const lastHeadline = await readLastHeadlineKV(env);
+            return new Response(`Bot Worker is active. Last posted headline: ${lastHeadline || 'N/A'}`, { status: 200 });
+        }
 
-        // 2. Handle Telegram Webhook POST (User messages)
+        // 3. Webhook Handling (for user commands/replies)
         if (request.method === 'POST') {
-            try {
+             // Since Telegraf is removed, we simplify the webhook reply logic
+             try {
                 const update = await request.json();
-
-                // Check for a user message
                 if (update.message && update.message.chat) {
                     const chatId = update.message.chat.id;
                     const text = update.message.text || "";
                     
                     // Reply back to the user who sent the message
                     const replyText = `ඔයා type කරපු දේ: <b>${text}</b>`;
-                    
                     await sendRawTelegramMessage(chatId, replyText);
-
-                    return new Response('Webhook message handled.', { status: 200 });
                 }
-                
-            } catch (error) {
-                console.error("Error processing Telegram webhook:", error);
-                // Return 200 to Telegram to prevent retries, even on error
-                return new Response('Error processing request.', { status: 200 });
+                return new Response('OK', { status: 200 });
+            } catch (e) {
+                 console.error('Webhook error:', e);
+                 return new Response('OK', { status: 200 }); // Always return OK to prevent Telegram retries
             }
         }
 
-        // 3. Default response for GET requests
-        return new Response('News Bot is alive! Use /trigger to manually run the scraper.', { status: 200 });
-    },
-
-    /**
-     * Handles scheduled events (Cron trigger)
-     */
-    async scheduled(event, env, ctx) {
-        await handleScheduled(env);
+        return new Response('Forex Factory News Bot is ready. Use /trigger to test manually.', { status: 200 });
     }
 };
-
