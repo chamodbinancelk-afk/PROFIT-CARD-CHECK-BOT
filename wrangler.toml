@@ -13,10 +13,10 @@ kv_namespaces = [
 # මෙය මඟින් while(true) loop එක ප්‍රතිස්ථාපනය වේ.
 # "*/10 * * * *" යන්නෙන් සෑම විනාඩි 10කට වරක් Bot එක ක්‍රියාත්මක වේ.
 [triggers]
-crons = ["*/10 * * * *"] 
+crons = ["*/1 * * * *"] 
 
 [secrets]
 # Bot Token එක රහස්‍ය විචල්‍යයක් (Secret) ලෙස තැබීම අනිවාර්යයි
-# BOT_TOKEN = "" 
+ BOT_TOKEN = "8299929776:AAGKU7rkfakmDBXdgiGSWzAHPgLRJs-twZg" 
 # CHAT_ID එකද රහස්‍ය විචල්‍යයක් ලෙස තැබීම ආරක්ෂිතයි
-# CHAT_ID = ""
+ CHAT_ID = "-1003177936060"
