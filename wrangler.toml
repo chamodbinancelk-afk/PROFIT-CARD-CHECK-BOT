@@ -1,0 +1,4 @@
+name = "cf-news-bot"
+main = "index.js"
+compatibility_date = "2025-10-12"
+usage_model = "bundled"
