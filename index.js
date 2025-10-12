@@ -8,17 +8,13 @@ const TELEGRAM_TOKEN = '8299929776:AAGKU7rkfakmDBXdgiGSWzAHPgLRJs-twZg';
 // 🚨🚨 CRITICAL: පණිවිඩ ලැබිය යුතු CHAT ID එක මෙහි ඇතුල් කරන්න! 🚨🚨
 const CHAT_ID = '-1003177936060'; 
 
-// Cloudflare Worker - COMBINED Forex Factory and CoinTelegraph News Scraper
-// This worker runs two separate scraping tasks on schedule.
 
-const { load } = require('cheerio');
-const moment = require('moment-timezone');
-
+const COLOMBO_TIMEZONE = 'Asia/Colombo';
 const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Cloudflare Worker)' };
 
 // --- KV KEYS ---
-const LAST_FOREX_HEADLINE_KEY = 'last_forex_headline'; // Old key renamed for clarity
-const LAST_CRYPTO_HEADLINE_KEY = 'last_crypto_headline'; // New key for crypto news
+const LAST_FOREX_HEADLINE_KEY = 'last_forex_headline';
+const LAST_CRYPTO_HEADLINE_KEY = 'last_crypto_headline';
 
 
 // =================================================================
@@ -27,6 +23,7 @@ const LAST_CRYPTO_HEADLINE_KEY = 'last_crypto_headline'; // New key for crypto n
 
 /**
  * Utility function to send raw messages via Telegram API.
+ * This function handles both text and photo messages.
  */
 async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
     if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN') {
@@ -52,6 +49,7 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
+
         if (!response.ok) {
             const errorText = await response.text();
             console.error(`Telegram API Error (${apiMethod}): ${response.status} - ${errorText}`);
@@ -62,7 +60,7 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
 }
 
 /**
- * KV Helper Functions (consolidated)
+ * KV Helper Functions
  */
 async function readLastHeadlineKV(env, key) {
     try {
@@ -83,7 +81,7 @@ async function writeLastHeadlineKV(env, key, headline) {
 }
 
 /**
- * Translation Function (Unchanged and working)
+ * Translation Function
  */
 async function translateText(text) {
     const translationApiUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=si&dt=t&q=${encodeURIComponent(text)}`;
@@ -99,7 +97,7 @@ async function translateText(text) {
 
 
 // =================================================================
-// --- 1. FOREX NEWS LOGIC (UNCHANGED) ---
+// --- 1. FOREX NEWS LOGIC ---
 // =================================================================
 
 async function getLatestForexNews() {
@@ -155,12 +153,12 @@ async function fetchForexNews(env) {
         await sendRawTelegramMessage(debugChatId, `✅ <b>SUCCESS (NEW - Forex):</b> Deployed: <b>${news.headline}</b>`);
     } catch (error) {
         console.error("An error occurred during FOREX task:", error);
-        await sendRawTelegramMessage(debugChatId, `❌ **CRITICAL FOREX ERROR:** ${error.message}`);
+        await sendRawTelegramMessage(debugChatId, `❌ <b>CRITICAL FOREX ERROR:</b> ${error.message}`);
     }
 }
 
 // =================================================================
-// --- 2. CRYPTO NEWS LOGIC (NEW) ---
+// --- 2. CRYPTO NEWS LOGIC ---
 // =================================================================
 
 async function getLatestCryptoNews() {
@@ -220,7 +218,7 @@ async function fetchCryptoNews(env) {
         await sendRawTelegramMessage(debugChatId, `✅ <b>SUCCESS (NEW - Crypto):</b> Deployed: <b>${news.headline}</b>`);
     } catch (error) {
         console.error("An error occurred during CRYPTO task:", error);
-        await sendRawTelegramMessage(debugChatId, `❌ **CRITICAL CRYPTO ERROR:** ${error.message}`);
+        await sendRawTelegramMessage(debugChatId, `❌ <b>CRITICAL CRYPTO ERROR:</b> ${error.message}`);
     }
 }
 
