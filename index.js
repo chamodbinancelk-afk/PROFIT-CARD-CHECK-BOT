@@ -6,21 +6,17 @@ const moment = require('moment-timezone');
 const TELEGRAM_TOKEN = '8299929776:AAGKU7rkfakmDBXdgiGSWzAHPgLRJs-twZg'; 
 
 // 🚨🚨 CRITICAL: පණිවිඩ ලැබිය යුතු CHAT ID එක මෙහි ඇතුල් කරන්න! 🚨🚨
-// (Private chat සඳහා ධන අංකයක් හෝ Group/Channel සඳහා ඍණ අංකයක්)
 const CHAT_ID = '-1003177936060'; 
 
 
 /**
  * Utility function to send raw messages via Telegram API.
- * This function now uses the hardcoded TELEGRAM_TOKEN.
  * @param {string} chatId The target chat ID.
  * @param {string} text The message text.
  */
 async function sendRawTelegramMessage(chatId, text) {
-    // We use the TELEGRAM_TOKEN defined at the top of the file
     const apiURL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
     
-    // Check if token is set before attempting to fetch
     if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN') {
         console.error("TELEGRAM_TOKEN is missing or not updated.");
         return;
@@ -46,7 +42,7 @@ async function sendRawTelegramMessage(chatId, text) {
 // --- Scheduled News Scraping Logic ---
 
 /**
- * Scrapes the latest news article from the configured URL.
+ * Scrapes the latest news article from the configured URL using the new selectors.
  */
 async function getLatestNews() {
     const url = 'https://www.ft.lk/news-list'; 
@@ -55,17 +51,26 @@ async function getLatestNews() {
     const html = await response.text();
     const $ = cheerio.load(html);
 
-    // Selector for the first news article
-    const firstArticle = $('.col-sm-12.col-xs-12.list-details-left-side-heading').first();
+    // 🚨 NEW Selector targeting the primary row container for a news item
+    const firstArticle = $('.cat-list-box .row').first(); 
     
     if (firstArticle.length === 0) {
         return null; 
     }
 
-    const title = firstArticle.find('a').text().trim();
-    const link = firstArticle.find('a').attr('href');
-    const content = firstArticle.next('.col-sm-12.col-xs-12.list-details-left-side-text').text().trim();
+    // Extracting details using relative selectors within the found article row
+    const titleElement = firstArticle.find('.list-details-left-side-heading a').first();
+    const contentElement = firstArticle.find('.list-details-left-side-text').first();
+
+    const title = titleElement.text().trim();
+    const link = titleElement.attr('href');
+    const content = contentElement.text().trim();
     
+    if (!title || !link) {
+         // This can happen if the elements are found but they are empty
+         return null;
+    }
+
     return {
         title: title,
         link: 'https://www.ft.lk' + link,
@@ -76,7 +81,6 @@ async function getLatestNews() {
 
 /**
  * Main logic executed by the Cron Trigger (scheduled event).
- * This now uses the hardcoded CHAT_ID for debugging and news posts.
  */
 async function handleScheduled(env) {
     const debugChatId = CHAT_ID; 
@@ -85,25 +89,26 @@ async function handleScheduled(env) {
         const latestNews = await getLatestNews();
         
         if (!latestNews) {
-            // 🚨 DEBUG: Send a message if scraping failed
-            await sendRawTelegramMessage(debugChatId, "⚠️ **SCRAPE FAILED:** Could not find any articles using the current selectors.");
+            // ⚠️ SCRAPE FAILED Message
+            await sendRawTelegramMessage(debugChatId, "⚠️ **SCRAPE FAILED:** Could not find articles (Selector Issue). Please check the website layout.");
             console.log("No new articles found or scrape failed.");
             return;
         }
 
         const newsLink = latestNews.link;
 
-        // Check KV to prevent duplicate sending (KV still uses env binding)
+        // Check KV to prevent duplicate sending (KV binding is still needed)
+        // Ensure you have a KV namespace named 'NEWS_STATE' bound to the Worker.
         const lastSentLink = await env.NEWS_STATE.get("last_sent_link");
 
         if (lastSentLink === newsLink) {
-            // 🚨 DEBUG: Send a message if the article is a duplicate
+            // 🟢 SUCCESS (No New) Message
             await sendRawTelegramMessage(debugChatId, `🟢 **SUCCESS (No New):** Article is a duplicate: <a href="${newsLink}">Click to view</a>`);
             console.log(`Article already sent: ${newsLink}`);
             return;
         }
 
-        // Construct and send the news message
+        // Construct and send the NEW news message
         const message = `<b>📰 Latest News Update 📰</b>\n\n` +
                         `<b>${latestNews.title}</b>\n\n` +
                         `${latestNews.content}\n\n` +
@@ -115,12 +120,12 @@ async function handleScheduled(env) {
         await env.NEWS_STATE.put("last_sent_link", newsLink);
 
         console.log(`Successfully sent new article: ${latestNews.title}`);
-        // 🚨 DEBUG: Send a success message
+        // ✅ SUCCESS (NEW) Message
         await sendRawTelegramMessage(debugChatId, `✅ **SUCCESS (NEW):** Deployed new article: <b>${latestNews.title}</b>`);
 
     } catch (error) {
         console.error("An error occurred during scheduled task:", error);
-        // 🚨 DEBUG: Send a message if a critical error occurred
+        // ❌ CRITICAL ERROR Message
         await sendRawTelegramMessage(debugChatId, `❌ **CRITICAL DEPLOYMENT ERROR:** ${error.message}`);
     }
 }
@@ -136,7 +141,7 @@ export default {
         
         // 1. Handle Manual Trigger (for debugging the scheduled task)
         if (url.pathname === '/trigger') {
-            const result = await handleScheduled(env);
+            await handleScheduled(env);
             return new Response("Scheduled task manually triggered and executed. Check Telegram for debug status.", { status: 200 });
         }
 
