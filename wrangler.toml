@@ -1,4 +1,11 @@
-name = "cf-news-bot"
-main = "index.js"
-compatibility_date = "2025-10-12"
-usage_model = "bundled"
+name = "cf-news-telegram-bot"
+main = "index.js" # ඔබගේ ප්‍රධාන ගොනුව
+compatibility_date = "2024-05-18"
+node_compat = true
+
+[vars]
+# ඔබට config vars (public values) අවශ්‍ය නම් මෙහි ඇතුළත් කරන්න
+
+[secrets]
+# 🚨 මෙහි කිසිවක් සෘජුව ලියන්න එපා.
+# BOT_TOKEN එක wrangler secret put BOT_TOKEN විධානය මගින් සකස් කළ යුතුය.
