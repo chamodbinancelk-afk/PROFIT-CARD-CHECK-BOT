@@ -8,12 +8,6 @@ const TELEGRAM_TOKEN = '8299929776:AAGKU7rkfakmDBXdgiGSWzAHPgLRJs-twZg';
 // 🚨🚨 CRITICAL: පණිවිඩ ලැබිය යුතු CHAT ID එක මෙහි ඇතුල් කරන්න! 🚨🚨
 const CHAT_ID = '-1003177936060'; 
 
-
-/**
- * Utility function to send raw messages via Telegram API.
- * @param {string} chatId The target chat ID.
- * @param {string} text The message text.
- */
 async function sendRawTelegramMessage(chatId, text) {
     const apiURL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
     
@@ -42,7 +36,7 @@ async function sendRawTelegramMessage(chatId, text) {
 // --- Scheduled News Scraping Logic ---
 
 /**
- * Scrapes the latest news article from the configured URL using the new selectors.
+ * Scrapes the latest news article from the configured URL using the most general selectors.
  */
 async function getLatestNews() {
     const url = 'https://www.ft.lk/news-list'; 
@@ -51,23 +45,26 @@ async function getLatestNews() {
     const html = await response.text();
     const $ = cheerio.load(html);
 
-    // 🚨 NEW Selector targeting the primary row container for a news item
-    const firstArticle = $('.cat-list-box .row').first(); 
+    // 🚨 NEW Selector targeting the link and surrounding content based on the updated structure.
+    const articleLinkElement = $('.cat-list-box .list-details-left-side-heading a').first(); 
     
-    if (firstArticle.length === 0) {
-        return null; 
+    if (articleLinkElement.length === 0) {
+        return null; // Link element not found
     }
 
-    // Extracting details using relative selectors within the found article row
-    const titleElement = firstArticle.find('.list-details-left-side-heading a').first();
-    const contentElement = firstArticle.find('.list-details-left-side-text').first();
+    const title = articleLinkElement.text().trim();
+    const link = articleLinkElement.attr('href');
+    
+    // Find the content text which is usually the element right after the heading container
+    const contentElement = articleLinkElement
+        .closest('.list-details-left-side-heading') // Go up to the heading container
+        .parent() // Go up to the column row
+        .find('.list-details-left-side-text') // Find the text in the same column row
+        .first();
 
-    const title = titleElement.text().trim();
-    const link = titleElement.attr('href');
     const content = contentElement.text().trim();
     
-    if (!title || !link) {
-         // This can happen if the elements are found but they are empty
+    if (!title || !link || link.startsWith('#')) {
          return null;
     }
 
@@ -90,7 +87,7 @@ async function handleScheduled(env) {
         
         if (!latestNews) {
             // ⚠️ SCRAPE FAILED Message
-            await sendRawTelegramMessage(debugChatId, "⚠️ **SCRAPE FAILED:** Could not find articles (Selector Issue). Please check the website layout.");
+            await sendRawTelegramMessage(debugChatId, "⚠️ **SCRAPE FAILED:** Could not find articles (Selector Issue). The website HTML structure may have changed again.");
             console.log("No new articles found or scrape failed.");
             return;
         }
@@ -98,7 +95,6 @@ async function handleScheduled(env) {
         const newsLink = latestNews.link;
 
         // Check KV to prevent duplicate sending (KV binding is still needed)
-        // Ensure you have a KV namespace named 'NEWS_STATE' bound to the Worker.
         const lastSentLink = await env.NEWS_STATE.get("last_sent_link");
 
         if (lastSentLink === newsLink) {
@@ -181,3 +177,4 @@ export default {
         await handleScheduled(env);
     }
 };
+
