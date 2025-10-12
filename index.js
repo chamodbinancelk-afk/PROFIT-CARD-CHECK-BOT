@@ -1,145 +1,186 @@
-import fetch from 'node-fetch';
-import { JSDOM } from 'jsdom';
-import { Translate } from '@google-cloud/translate/build/src/v2';
 import { Telegraf } from 'telegraf';
-import dotenv from 'dotenv';
-import fs from 'fs';
-import path from 'path';
+import cheerio from 'cheerio';
 import moment from 'moment-timezone';
 
-// Load environment variables
-dotenv.config();
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const FF_URL = process.env.FOREXFACTORY_NEWS_URL || "https://www.forexfactory.com/news";
-const FETCH_INTERVAL = parseInt(process.env.FETCH_INTERVAL_SEC || "1", 10) * 1000;
-const LAST_HEADLINE_FILE = "last_headline.txt";
+// 🚨 Cloudflare Workers වලදී, Node.js ගොනු පද්ධතිය (fs) සහ path භාවිතා කළ නොහැක.
+// State Management සඳහා KV (Key-Value) Store භාවිතා කරමු.
 
-const bot = new Telegraf(BOT_TOKEN);
-const translate = new Translate();
+const LAST_HEADLINE_KEY = 'last_forex_headline';
+const FF_URL = "https://www.forexfactory.com/news";
+const COLOMBO_TIMEZONE = 'Asia/Colombo';
+const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Cloudflare Worker)' };
 
-function readLastHeadline() {
-  try {
-    if (!fs.existsSync(LAST_HEADLINE_FILE)) {
-      return null;
+/**
+ * Cloudflare KV Store එකෙන් අවසන් Headline එක කියවයි.
+ * @param {object} env - Worker Environment Variables (KV Bindings අඩංගුයි).
+ * @returns {Promise<string|null>}
+ */
+async function readLastHeadlineKV(env) {
+    try {
+        // NEWS_STATE යනු wrangler.toml හි නිර්වචනය කළ KV binding එකයි.
+        const last = await env.NEWS_STATE.get(LAST_HEADLINE_KEY);
+        return last;
+    } catch (e) {
+        console.error('KV Read Error:', e);
+        return null;
     }
-    return fs.readFileSync(LAST_HEADLINE_FILE, { encoding: 'utf-8' }).trim();
-  } catch (err) {
-    console.error('Error reading last headline:', err);
-    return null;
-  }
 }
 
-function writeLastHeadline(headline) {
-  try {
-    fs.writeFileSync(LAST_HEADLINE_FILE, headline, { encoding: 'utf-8' });
-  } catch (err) {
-    console.error('Error writing last headline:', err);
-  }
-}
-
-async function fetchLatestNews() {
-  const last = readLastHeadline();
-  const headers = { 'User-Agent': 'Mozilla/5.0' };
-
-  let resp;
-  try {
-    resp = await fetch(FF_URL, { headers, timeout: 10000 });
-    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
-  } catch (e) {
-    console.error(`Failed to fetch news page: ${e}`);
-    return;
-  }
-
-  const html = await resp.text();
-  const dom = new JSDOM(html);
-  const document = dom.window.document;
-
-  const newsLinkTag = Array.from(document.querySelectorAll('a')).find(a => {
-    const href = a.getAttribute('href');
-    return typeof href === 'string' && href.startsWith('/news/') && !href.endsWith('/hit');
-  });
-
-  if (!newsLinkTag) {
-    console.warn("News element not found!");
-    return;
-  }
-
-  const headline = newsLinkTag.textContent.trim();
-  if (headline === last) {
-    return;
-  }
-
-  writeLastHeadline(headline);
-
-  const newsUrl = "https://www.forexfactory.com" + newsLinkTag.getAttribute('href');
-
-  let newsResp;
-  try {
-    newsResp = await fetch(newsUrl, { headers, timeout: 10000 });
-    if (!newsResp.ok) throw new Error(`HTTP error! status: ${newsResp.status}`);
-  } catch (e) {
-    console.error(`Failed to fetch news detail page: ${e}`);
-    return;
-  }
-
-  const newsHtml = await newsResp.text();
-  const newsDom = new JSDOM(newsHtml);
-  const newsDoc = newsDom.window.document;
-
-  const imgTag = newsDoc.querySelector('img.attach');
-  const imgUrl = imgTag ? imgTag.getAttribute('src') : null;
-
-  const descTag = newsDoc.querySelector('p.news__copy');
-  const description = descTag ? descTag.textContent.trim() : "No description found.";
-
-  let headline_si = "Translation failed";
-  try {
-    const [translation] = await translate.translate(headline, 'si');
-    headline_si = translation;
-  } catch (e) {
-    console.error(`Headline translation error: ${e}`);
-  }
-
-  let description_si = "Description translation failed";
-  try {
-    const [translation] = await translate.translate(description, 'si');
-    description_si = translation;
-  } catch (e) {
-    console.error(`Description translation error: ${e}`);
-  }
-
-  const date_time = moment().tz('Asia/Colombo').format('YYYY-MM-DD hh:mm A');
-
-  const message = `📰 *Fundamental News (සිංහල)*
-
-
-⏰ *Date & Time:* ${date_time}
-
-🌎 *Headline:* ${headline}
-
-
-🔥 *සිංහල:* ${description_si}
-
-
-🚀 *Dev :* Mr Chamo 🇱🇰
-`;
-
-  try {
-    if (imgUrl) {
-      await bot.telegram.sendPhoto(CHAT_ID, imgUrl, { caption: message, parse_mode: 'Markdown' });
-    } else {
-      await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
+/**
+ * Cloudflare KV Store එකට නවතම Headline එක ලියයි.
+ * @param {object} env - Worker Environment Variables.
+ * @param {string} headline - නව Headline එක.
+ * @returns {Promise<void>}
+ */
+async function writeLastHeadlineKV(env, headline) {
+    try {
+        await env.NEWS_STATE.put(LAST_HEADLINE_KEY, headline);
+    } catch (e) {
+        console.error('KV Write Error:', e);
     }
-    console.info(`Posted: ${headline}`);
-  } catch (e) {
-    console.error(`Failed to send message: ${e}`);
-  }
 }
 
-(async () => {
-  while (true) {
-    await fetchLatestNews();
-    await new Promise(resolve => setTimeout(resolve, FETCH_INTERVAL));
-  }
-})();
+/**
+ * සරල public API හරහා ඉංග්‍රීසි පාඨයක් සිංහලට පරිවර්තනය කරයි.
+ * 🚨 Note: Production සඳහා Google Cloud Translation API යතුරක් භාවිත කරන්න.
+ * @param {string} text - පරිවර්තනය කළ යුතු පාඨය.
+ * @returns {Promise<string>}
+ */
+async function translateText(text) {
+    const translationApiUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=si&dt=t&q=${encodeURIComponent(text)}`;
+    try {
+        const response = await fetch(translationApiUrl);
+        const data = await response.json();
+        // Google Translate API හි ප්‍රතිචාරයෙන් පරිවර්තනය කළ කොටස පමණක් ලබා ගනී
+        return data[0].map(item => item[0]).join('');
+    } catch (e) {
+        console.error('Translation API Error. Using original text.', e);
+        return `[Translation Failed: ${text}]`;
+    }
+}
+
+/**
+ * Forex Factory වෙතින් නවතම පුවත් ලබා ගෙන Telegram වෙත යවයි.
+ * @param {object} env - Worker Environment Variables (Secrets & KV).
+ * @returns {Promise<void>}
+ */
+async function fetchLatestNews(env) {
+    const lastHeadline = await readLastHeadlineKV(env);
+
+    const bot = new Telegraf(env.BOT_TOKEN);
+    const chatId = env.CHAT_ID;
+
+    // 1. Fetch News Page
+    let resp;
+    try {
+        resp = await fetch(FF_URL, { headers: HEADERS });
+        if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+    } catch (e) {
+        console.error(`Failed to fetch news page: ${e}`);
+        return;
+    }
+
+    const html = await resp.text();
+    const $ = cheerio.load(html); // Cheerio භාවිතයෙන් HTML parse කිරීම
+
+    // 2. Find the latest news
+    const newsLinkTag = $('a[href^="/news/"][href$=""]')
+        .not('a[href$="/hit"]')
+        .first();
+
+    if (newsLinkTag.length === 0) {
+        console.warn("News element not found!");
+        return;
+    }
+
+    const headline = newsLinkTag.text().trim();
+    if (headline === lastHeadline) {
+        console.info(`No new headline. Last: ${headline}`);
+        return;
+    }
+
+    // 3. New headline found: Save and fetch details
+    await writeLastHeadlineKV(env, headline);
+    console.info(`New headline detected: ${headline}`);
+
+    const newsUrl = "https://www.forexfactory.com" + newsLinkTag.attr('href');
+    
+    let newsResp;
+    try {
+        newsResp = await fetch(newsUrl, { headers: HEADERS });
+        if (!newsResp.ok) throw new Error(`HTTP error! status: ${newsResp.status}`);
+    } catch (e) {
+        console.error(`Failed to fetch news detail page: ${e}`);
+        return;
+    }
+
+    const newsHtml = await newsResp.text();
+    const $detail = cheerio.load(newsHtml);
+
+    // Get Image URL
+    const imgTag = $detail('img.attach');
+    const imgUrl = imgTag.length ? imgTag.attr('src') : null;
+
+    // Get Description
+    const descTag = $detail('p.news__copy');
+    const description = descTag.length ? descTag.text().trim() : "No description found.";
+
+    // 4. Translate Content
+    const headline_si = await translateText(headline);
+    const description_si = await translateText(description);
+
+    const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
+
+    const message = `📰 *Fundamental News (සිංහල)*\n\n⏰ *Date & Time:* ${date_time}\n\n🌎 *Headline:* ${headline}\n\n🔥 *සිංහල:* ${description_si}\n\n[Read More](${newsUrl})\n\n🚀 *Dev :* Mr Chamo 🇱🇰`;
+
+    // 5. Send to Telegram
+    try {
+        if (imgUrl) {
+            await bot.telegram.sendPhoto(chatId, imgUrl, { 
+                caption: message, 
+                parse_mode: 'Markdown' 
+            });
+        } else {
+            await bot.telegram.sendMessage(chatId, message, { 
+                parse_mode: 'Markdown' 
+            });
+        }
+        console.info(`Successfully posted: ${headline}`);
+    } catch (e) {
+        console.error(`Failed to send message to Telegram: ${e}`);
+    }
+}
+
+// --- Cloudflare Worker Export ---
+
+export default {
+    // 🚨 1. Scheduled Handler (Cron Trigger)
+    // මෙය while(true) loop එක ප්‍රතිස්ථාපනය කරයි.
+    async scheduled(event, env, ctx) {
+        ctx.waitUntil(fetchLatestNews(env));
+    },
+
+    // 🚨 2. Fetch Handler (Status Check/Webhook Configuration සඳහා)
+    async fetch(request, env, ctx) {
+        if (request.url.includes('/status')) {
+             const lastHeadline = await readLastHeadlineKV(env);
+             return new Response(`Bot Worker is active. Last posted headline: ${lastHeadline || 'N/A'}`);
+        }
+        
+        // 🚨 3. Webhook Handling (If you want to use user commands too)
+        // Note: For a publishing bot, the scheduled handler is the primary focus.
+        if (request.method === 'POST') {
+             try {
+                const bot = new Telegraf(env.BOT_TOKEN);
+                const update = await request.json();
+                await bot.handleUpdate(update);
+                return new Response('OK', { status: 200 });
+            } catch (e) {
+                console.error('Webhook error:', e);
+                return new Response('OK', { status: 200 });
+            }
+        }
+        
+        return new Response('Bot Worker is running in Scheduled Mode. Access /status to check last run.', { status: 200 });
+    }
+};
