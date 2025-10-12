@@ -11,10 +11,10 @@ const CHAT_ID = '-1003177936060';
 
 const COLOMBO_TIMEZONE = 'Asia/Colombo';
 const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Cloudflare Worker)' };
+const FF_URL = "https://www.forexfactory.com/news";
 
-// --- KV KEYS ---
-const LAST_FOREX_HEADLINE_KEY = 'last_forex_headline';
-const LAST_CRYPTO_HEADLINE_KEY = 'last_crypto_headline';
+// --- KV KEY ---
+const LAST_HEADLINE_KEY = 'last_forex_headline';
 
 
 // =================================================================
@@ -23,7 +23,6 @@ const LAST_CRYPTO_HEADLINE_KEY = 'last_crypto_headline';
 
 /**
  * Utility function to send raw messages via Telegram API.
- * This function handles both text and photo messages.
  */
 async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
     if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN') {
@@ -97,16 +96,16 @@ async function translateText(text) {
 
 
 // =================================================================
-// --- 1. FOREX NEWS LOGIC ---
+// --- CORE FOREX NEWS LOGIC ---
 // =================================================================
 
 async function getLatestForexNews() {
-    const url = "https://www.forexfactory.com/news";
-    const resp = await fetch(url, { headers: HEADERS });
+    const resp = await fetch(FF_URL, { headers: HEADERS });
     if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
 
     const html = await resp.text();
     const $ = load(html);
+    // Selector to find the latest news link (used previously)
     const newsLinkTag = $('a[href^="/news/"]').not('a[href$="/hit"]').first();
 
     if (newsLinkTag.length === 0) return null;
@@ -123,22 +122,26 @@ async function getLatestForexNews() {
     const imgUrl = $detail('img.attach').attr('src');
     const description = $detail('p.news__copy').text().trim() || "No description found.";
 
-    return { headline, newsUrl, imgUrl, description, key: LAST_FOREX_HEADLINE_KEY };
+    return { headline, newsUrl, imgUrl, description };
 }
 
 async function fetchForexNews(env) {
     const debugChatId = CHAT_ID;
     try {
         const news = await getLatestForexNews();
-        if (!news) return;
-
-        const lastHeadline = await readLastHeadlineKV(env, news.key);
-        if (news.headline === lastHeadline) {
-            console.info(`Forex: No new headline. Last: ${news.headline}`);
+        if (!news) {
+            await sendRawTelegramMessage(debugChatId, `🟢 <b>SUCCESS (No New Forex):</b> Scraper ran, but no new headline found.`);
             return;
         }
 
-        await writeLastHeadlineKV(env, news.key, news.headline);
+        const lastHeadline = await readLastHeadlineKV(env, LAST_HEADLINE_KEY);
+        if (news.headline === lastHeadline) {
+            console.info(`Forex: No new headline. Last: ${news.headline}`);
+            await sendRawTelegramMessage(debugChatId, `🟢 <b>SUCCESS (No New Forex):</b> Scraper ran, but headline is same as previous.`);
+            return;
+        }
+
+        await writeLastHeadlineKV(env, LAST_HEADLINE_KEY, news.headline);
         const description_si = await translateText(news.description);
         const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
         
@@ -158,81 +161,12 @@ async function fetchForexNews(env) {
 }
 
 // =================================================================
-// --- 2. CRYPTO NEWS LOGIC ---
-// =================================================================
-
-async function getLatestCryptoNews() {
-    // Targeting CoinTelegraph's Ethereum page for latest news
-    const url = "https://cointelegraph.com/tags/ethereum";
-    const resp = await fetch(url, { headers: HEADERS });
-    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
-
-    const html = await resp.text();
-    const $ = load(html);
-    
-    // Selector targets the first headline link on the page
-    const newsLinkTag = $('.post-card__title a').first();
-    
-    if (newsLinkTag.length === 0) return null;
-
-    const headline = newsLinkTag.text().trim();
-    const link = newsLinkTag.attr('href');
-    const newsUrl = "https://cointelegraph.com" + link;
-    
-    // Scrape summary and image from the list page itself (simpler approach)
-    const summary = newsLinkTag.closest('.post-card').find('.post-card__text').text().trim() || "Click to read full summary.";
-    
-    const imgElement = newsLinkTag.closest('.post-card').find('img').first();
-    let imgUrl = imgElement.attr('data-src') || imgElement.attr('src');
-    if (imgUrl && imgUrl.startsWith('//')) {
-        imgUrl = 'https:' + imgUrl; // Fix protocol relative URL
-    }
-
-    return { headline, newsUrl, imgUrl, description: summary, key: LAST_CRYPTO_HEADLINE_KEY };
-}
-
-async function fetchCryptoNews(env) {
-    const debugChatId = CHAT_ID;
-    try {
-        const news = await getLatestCryptoNews();
-        if (!news) return;
-
-        const lastHeadline = await readLastHeadlineKV(env, news.key);
-        if (news.headline === lastHeadline) {
-            console.info(`Crypto: No new headline. Last: ${news.headline}`);
-            return;
-        }
-
-        await writeLastHeadlineKV(env, news.key, news.headline);
-        const description_si = await translateText(news.description);
-        const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
-        
-        const message = `<b>🟣 Crypto News (ETH/සිංහල)</b>\n\n` +
-                        `<b>⏰ Date & Time:</b> ${date_time}\n\n` +
-                        `<b>🌎 Headline (English):</b> ${news.headline}\n\n` +
-                        `<b>🔥 සිංහල:</b> ${description_si}\n\n` +
-                        `<a href="${news.newsUrl}">Read Full Article</a>\n\n` +
-                        `🚀 <i>Dev: Mr Chamo 🇱🇰</i>`;
-
-        await sendRawTelegramMessage(CHAT_ID, message, news.imgUrl);
-        await sendRawTelegramMessage(debugChatId, `✅ <b>SUCCESS (NEW - Crypto):</b> Deployed: <b>${news.headline}</b>`);
-    } catch (error) {
-        console.error("An error occurred during CRYPTO task:", error);
-        await sendRawTelegramMessage(debugChatId, `❌ <b>CRITICAL CRYPTO ERROR:</b> ${error.message}`);
-    }
-}
-
-// =================================================================
 // --- CLOUDFLARE WORKER HANDLERS ---
 // =================================================================
 
 async function handleScheduledTasks(env) {
-    // Run both tasks concurrently and wait for both to complete
-    const forexPromise = fetchForexNews(env);
-    const cryptoPromise = fetchCryptoNews(env);
-    
-    // Wait for both promises to settle
-    await Promise.allSettled([forexPromise, cryptoPromise]);
+    // Only run the Forex task
+    await fetchForexNews(env);
 }
 
 export default {
@@ -249,17 +183,16 @@ export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
 
-        // Manual trigger for testing both scheduled tasks
+        // Manual trigger for testing the scheduled task
         if (url.pathname === '/trigger') {
             await handleScheduledTasks(env);
-            return new Response("Scheduled tasks (Forex & Crypto) manually triggered. Check Telegram for debug status.", { status: 200 });
+            return new Response("Scheduled task (Forex Only) manually triggered. Check Telegram for debug status.", { status: 200 });
         }
         
         // Status check
         if (url.pathname === '/status') {
-            const lastForex = await readLastHeadlineKV(env, LAST_FOREX_HEADLINE_KEY);
-            const lastCrypto = await readLastHeadlineKV(env, LAST_CRYPTO_HEADLINE_KEY);
-            return new Response(`Bot Worker is active.\nForex: ${lastForex || 'N/A'}\nCrypto: ${lastCrypto || 'N/A'}`, { status: 200 });
+            const lastForex = await readLastHeadlineKV(env, LAST_HEADLINE_KEY);
+            return new Response(`Forex Bot Worker is active.\nLast Forex Headline: ${lastForex || 'N/A'}`, { status: 200 });
         }
 
         // Webhook Handling (for user commands/replies)
@@ -279,7 +212,7 @@ export default {
             }
         }
 
-        return new Response('Forex & Crypto News Bot is ready. Use /trigger to test manually.', { status: 200 });
+        return new Response('Forex News Bot is ready. Use /trigger to test manually.', { status: 200 });
     }
 };
 
