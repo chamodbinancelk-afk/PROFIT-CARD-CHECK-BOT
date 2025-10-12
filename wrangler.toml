@@ -8,9 +8,6 @@ compatibility_date = "2025-10-12"
 compatibility_flags = ["nodejs_compat"]
 
 # KV Namespace එක නිර්වචනය කිරීම
-kv_namespaces = [
-  { binding = "NEWS_STATE", id = "6d829871133143a38ad738c426d83d31" }
-]
 
 # Cron Trigger (Scheduled Event)
 [triggers]
