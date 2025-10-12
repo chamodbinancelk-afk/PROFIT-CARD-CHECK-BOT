@@ -1,6 +1,6 @@
-const cheerio = require('cheerio');
-const { Telegraf } = require('telegraf'); 
+const { load } = require('cheerio');
 const moment = require('moment-timezone');
+
 
 // 🚨🚨 CRITICAL: ඔබගේ සැබෑ BOT TOKEN එක මෙහි ඇතුල් කරන්න! 🚨🚨
 const TELEGRAM_TOKEN = '8299929776:AAGKU7rkfakmDBXdgiGSWzAHPgLRJs-twZg'; 
@@ -8,22 +8,25 @@ const TELEGRAM_TOKEN = '8299929776:AAGKU7rkfakmDBXdgiGSWzAHPgLRJs-twZg';
 // 🚨🚨 CRITICAL: පණිවිඩ ලැබිය යුතු CHAT ID එක මෙහි ඇතුල් කරන්න! 🚨🚨
 const CHAT_ID = '-1003177936060'; 
 
-// Cloudflare Worker - Forex Factory News Scraper with Sinhala Translation
-// This worker uses raw fetch for maximum compatibility in the Workers environment.
+// Cloudflare Worker - COMBINED Forex Factory and CoinTelegraph News Scraper
+// This worker runs two separate scraping tasks on schedule.
 
+const { load } = require('cheerio');
+const moment = require('moment-timezone');
 
-const LAST_HEADLINE_KEY = 'last_forex_headline';
-const FF_URL = "https://www.forexfactory.com/news";
-const COLOMBO_TIMEZONE = 'Asia/Colombo';
 const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Cloudflare Worker)' };
 
+// --- KV KEYS ---
+const LAST_FOREX_HEADLINE_KEY = 'last_forex_headline'; // Old key renamed for clarity
+const LAST_CRYPTO_HEADLINE_KEY = 'last_crypto_headline'; // New key for crypto news
+
+
+// =================================================================
+// --- UTILITY FUNCTIONS ---
+// =================================================================
 
 /**
  * Utility function to send raw messages via Telegram API.
- * This function handles both text and photo messages.
- * @param {string} chatId The target chat ID.
- * @param {string} message The message text (caption).
- * @param {string|null} [imgUrl=null] Image URL to send as a photo.
  */
 async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
     if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN') {
@@ -31,16 +34,12 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
         return;
     }
     
-    let apiMethod = 'sendMessage';
-    let payload = {
-        chat_id: chatId,
-        parse_mode: 'HTML' // We use HTML for robust formatting
-    };
+    let apiMethod = imgUrl ? 'sendPhoto' : 'sendMessage';
+    let payload = { chat_id: chatId, parse_mode: 'HTML' };
 
     if (imgUrl) {
-        apiMethod = 'sendPhoto';
         payload.photo = imgUrl;
-        payload.caption = message; // Message becomes the caption
+        payload.caption = message;
     } else {
         payload.text = message;
     }
@@ -53,7 +52,6 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-
         if (!response.ok) {
             const errorText = await response.text();
             console.error(`Telegram API Error (${apiMethod}): ${response.status} - ${errorText}`);
@@ -63,36 +61,35 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
     }
 }
 
-
-// --- KV Helpers ---
-
-async function readLastHeadlineKV(env) {
+/**
+ * KV Helper Functions (consolidated)
+ */
+async function readLastHeadlineKV(env, key) {
     try {
-        const last = await env.NEWS_STATE.get(LAST_HEADLINE_KEY);
+        const last = await env.NEWS_STATE.get(key);
         return last;
     } catch (e) {
-        console.error('KV Read Error:', e);
+        console.error(`KV Read Error (${key}):`, e);
         return null;
     }
 }
 
-async function writeLastHeadlineKV(env, headline) {
+async function writeLastHeadlineKV(env, key, headline) {
     try {
-        await env.NEWS_STATE.put(LAST_HEADLINE_KEY, headline);
+        await env.NEWS_STATE.put(key, headline);
     } catch (e) {
-        console.error('KV Write Error:', e);
+        console.error(`KV Write Error (${key}):`, e);
     }
 }
 
-// --- Translation Function (SYNTAX FIXED) ---
-
+/**
+ * Translation Function (Unchanged and working)
+ */
 async function translateText(text) {
-    // 🚨 FIX: Corrected template literal syntax (missing backticks)
     const translationApiUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=si&dt=t&q=${encodeURIComponent(text)}`;
     try {
         const response = await fetch(translationApiUrl);
         const data = await response.json();
-        // Extracting and joining translated segments
         return data[0].map(item => item[0]).join('');
     } catch (e) {
         console.error('Translation API Error. Using original text.', e);
@@ -100,140 +97,191 @@ async function translateText(text) {
     }
 }
 
-// --- Main Scraping Logic ---
 
-async function fetchLatestNews(env) {
-    const debugChatId = CHAT_ID;
-    
-    // 1. Check for last sent headline
-    const lastHeadline = await readLastHeadlineKV(env);
+// =================================================================
+// --- 1. FOREX NEWS LOGIC (UNCHANGED) ---
+// =================================================================
 
-    // 2. Fetch News Page
-    let resp;
-    try {
-        resp = await fetch(FF_URL, { headers: HEADERS });
-        if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
-    } catch (e) {
-        // Send critical error to user if fetch fails
-        await sendRawTelegramMessage(debugChatId, `❌ CRITICAL FETCH ERROR: Failed to access Forex Factory: ${e.message}`);
-        return;
-    }
+async function getLatestForexNews() {
+    const url = "https://www.forexfactory.com/news";
+    const resp = await fetch(url, { headers: HEADERS });
+    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
 
     const html = await resp.text();
     const $ = load(html);
-
-    // 3. Find the latest news link tag
-    // Selector targets the link tag starting with /news/ and not ending with /hit
     const newsLinkTag = $('a[href^="/news/"]').not('a[href$="/hit"]').first();
 
-    if (newsLinkTag.length === 0) {
-        await sendRawTelegramMessage(debugChatId, "⚠️ SCRAPE FAILED: Could not find any news headlines on Forex Factory.");
-        console.warn("News element not found!");
-        return;
-    }
+    if (newsLinkTag.length === 0) return null;
 
     const headline = newsLinkTag.text().trim();
-    if (headline === lastHeadline) {
-        await sendRawTelegramMessage(debugChatId, `🟢 SUCCESS (No New): Headline is a duplicate. Last: ${headline}`);
-        console.info(`No new headline. Last: ${headline}`);
-        return;
-    }
-
-    // 4. New headline found: Save and fetch details
-    await writeLastHeadlineKV(env, headline);
-    console.info(`New headline detected: ${headline}`);
-
     const newsUrl = "https://www.forexfactory.com" + newsLinkTag.attr('href');
     
-    let newsResp;
-    try {
-        newsResp = await fetch(newsUrl, { headers: HEADERS });
-        if (!newsResp.ok) throw new Error(`HTTP error! status: ${newsResp.status}`);
-    } catch (e) {
-        await sendRawTelegramMessage(debugChatId, `❌ DETAIL FETCH ERROR: Failed to fetch news detail page: ${e.message}`);
-        return;
-    }
+    // Fetch detail page
+    const newsResp = await fetch(newsUrl, { headers: HEADERS });
+    if (!newsResp.ok) throw new Error(`HTTP error! status: ${newsResp.status} on detail page`);
 
     const newsHtml = await newsResp.text();
     const $detail = load(newsHtml);
+    const imgUrl = $detail('img.attach').attr('src');
+    const description = $detail('p.news__copy').text().trim() || "No description found.";
 
-    // Get Image URL
-    const imgTag = $detail('img.attach');
-    const imgUrl = imgTag.length ? imgTag.attr('src') : null;
+    return { headline, newsUrl, imgUrl, description, key: LAST_FOREX_HEADLINE_KEY };
+}
 
-    // Get Description
-    const descTag = $detail('p.news__copy');
-    const description = descTag.length ? descTag.text().trim() : "No description found.";
-
-    // 5. Translate Content
-    const headline_si = await translateText(headline);
-    const description_si = await translateText(description);
-
-    const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
-
-    // Message using HTML for robust formatting
-    const message = `<b>📰 Fundamental News (සිංහල)</b>\n\n` +
-                    `<b>⏰ Date & Time:</b> ${date_time}\n\n` +
-                    `<b>🌎 Headline (English):</b> ${headline}\n\n` +
-                    `<b>🔥 සිංහල:</b> ${description_si}\n\n` +
-                    `<a href="${newsUrl}">Read Full Article</a>\n\n` +
-                    `🚀 <i>Dev: Mr Chamo 🇱🇰</i>`;
-
-    // 6. Send to Telegram (uses raw fetch)
+async function fetchForexNews(env) {
+    const debugChatId = CHAT_ID;
     try {
-        await sendRawTelegramMessage(CHAT_ID, message, imgUrl);
-        await sendRawTelegramMessage(debugChatId, `✅ SUCCESS (NEW): Deployed new article: <b>${headline}</b>`);
-        console.info(`Successfully posted: ${headline}`);
-    } catch (e) {
-        await sendRawTelegramMessage(debugChatId, `❌ CRITICAL POST ERROR: Failed to send message to Telegram: ${e.message}`);
-        console.error(`Failed to send message to Telegram: ${e}`);
+        const news = await getLatestForexNews();
+        if (!news) return;
+
+        const lastHeadline = await readLastHeadlineKV(env, news.key);
+        if (news.headline === lastHeadline) {
+            console.info(`Forex: No new headline. Last: ${news.headline}`);
+            return;
+        }
+
+        await writeLastHeadlineKV(env, news.key, news.headline);
+        const description_si = await translateText(news.description);
+        const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
+        
+        const message = `<b>💵 Fundamental News (Forex/සිංහල)</b>\n\n` +
+                        `<b>⏰ Date & Time:</b> ${date_time}\n\n` +
+                        `<b>🌎 Headline (English):</b> ${news.headline}\n\n` +
+                        `<b>🔥 සිංහල:</b> ${description_si}\n\n` +
+                        `<a href="${news.newsUrl}">Read Full Article</a>\n\n` +
+                        `🚀 <i>Dev: Mr Chamo 🇱🇰</i>`;
+
+        await sendRawTelegramMessage(CHAT_ID, message, news.imgUrl);
+        await sendRawTelegramMessage(debugChatId, `✅ <b>SUCCESS (NEW - Forex):</b> Deployed: <b>${news.headline}</b>`);
+    } catch (error) {
+        console.error("An error occurred during FOREX task:", error);
+        await sendRawTelegramMessage(debugChatId, `❌ **CRITICAL FOREX ERROR:** ${error.message}`);
     }
 }
 
-// --- Cloudflare Worker Export ---
+// =================================================================
+// --- 2. CRYPTO NEWS LOGIC (NEW) ---
+// =================================================================
+
+async function getLatestCryptoNews() {
+    // Targeting CoinTelegraph's Ethereum page for latest news
+    const url = "https://cointelegraph.com/tags/ethereum";
+    const resp = await fetch(url, { headers: HEADERS });
+    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+
+    const html = await resp.text();
+    const $ = load(html);
+    
+    // Selector targets the first headline link on the page
+    const newsLinkTag = $('.post-card__title a').first();
+    
+    if (newsLinkTag.length === 0) return null;
+
+    const headline = newsLinkTag.text().trim();
+    const link = newsLinkTag.attr('href');
+    const newsUrl = "https://cointelegraph.com" + link;
+    
+    // Scrape summary and image from the list page itself (simpler approach)
+    const summary = newsLinkTag.closest('.post-card').find('.post-card__text').text().trim() || "Click to read full summary.";
+    
+    const imgElement = newsLinkTag.closest('.post-card').find('img').first();
+    let imgUrl = imgElement.attr('data-src') || imgElement.attr('src');
+    if (imgUrl && imgUrl.startsWith('//')) {
+        imgUrl = 'https:' + imgUrl; // Fix protocol relative URL
+    }
+
+    return { headline, newsUrl, imgUrl, description: summary, key: LAST_CRYPTO_HEADLINE_KEY };
+}
+
+async function fetchCryptoNews(env) {
+    const debugChatId = CHAT_ID;
+    try {
+        const news = await getLatestCryptoNews();
+        if (!news) return;
+
+        const lastHeadline = await readLastHeadlineKV(env, news.key);
+        if (news.headline === lastHeadline) {
+            console.info(`Crypto: No new headline. Last: ${news.headline}`);
+            return;
+        }
+
+        await writeLastHeadlineKV(env, news.key, news.headline);
+        const description_si = await translateText(news.description);
+        const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
+        
+        const message = `<b>🟣 Crypto News (ETH/සිංහල)</b>\n\n` +
+                        `<b>⏰ Date & Time:</b> ${date_time}\n\n` +
+                        `<b>🌎 Headline (English):</b> ${news.headline}\n\n` +
+                        `<b>🔥 සිංහල:</b> ${description_si}\n\n` +
+                        `<a href="${news.newsUrl}">Read Full Article</a>\n\n` +
+                        `🚀 <i>Dev: Mr Chamo 🇱🇰</i>`;
+
+        await sendRawTelegramMessage(CHAT_ID, message, news.imgUrl);
+        await sendRawTelegramMessage(debugChatId, `✅ <b>SUCCESS (NEW - Crypto):</b> Deployed: <b>${news.headline}</b>`);
+    } catch (error) {
+        console.error("An error occurred during CRYPTO task:", error);
+        await sendRawTelegramMessage(debugChatId, `❌ **CRITICAL CRYPTO ERROR:** ${error.message}`);
+    }
+}
+
+// =================================================================
+// --- CLOUDFLARE WORKER HANDLERS ---
+// =================================================================
+
+async function handleScheduledTasks(env) {
+    // Run both tasks concurrently and wait for both to complete
+    const forexPromise = fetchForexNews(env);
+    const cryptoPromise = fetchCryptoNews(env);
+    
+    // Wait for both promises to settle
+    await Promise.allSettled([forexPromise, cryptoPromise]);
+}
+
 export default {
-    // 1. Scheduled Handler (Cron Trigger)
+    /**
+     * Handles scheduled events (Cron trigger)
+     */
     async scheduled(event, env, ctx) {
-        // Use ctx.waitUntil to ensure the task finishes
-        ctx.waitUntil(fetchLatestNews(env));
+        ctx.waitUntil(handleScheduledTasks(env));
     },
 
-    // 2. Fetch Handler (Webhook and Status)
+    /**
+     * Handles Fetch requests (Webhook and Status/Trigger)
+     */
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
 
-        // Manual trigger for testing the scheduled task
+        // Manual trigger for testing both scheduled tasks
         if (url.pathname === '/trigger') {
-            await fetchLatestNews(env);
-            return new Response("Scheduled task manually triggered and executed. Check Telegram for debug status.", { status: 200 });
+            await handleScheduledTasks(env);
+            return new Response("Scheduled tasks (Forex & Crypto) manually triggered. Check Telegram for debug status.", { status: 200 });
         }
         
-        // Status check to see the last headline
+        // Status check
         if (url.pathname === '/status') {
-            const lastHeadline = await readLastHeadlineKV(env);
-            return new Response(`Bot Worker is active. Last posted headline: ${lastHeadline || 'N/A'}`, { status: 200 });
+            const lastForex = await readLastHeadlineKV(env, LAST_FOREX_HEADLINE_KEY);
+            const lastCrypto = await readLastHeadlineKV(env, LAST_CRYPTO_HEADLINE_KEY);
+            return new Response(`Bot Worker is active.\nForex: ${lastForex || 'N/A'}\nCrypto: ${lastCrypto || 'N/A'}`, { status: 200 });
         }
 
-        // 3. Webhook Handling (for user commands/replies)
+        // Webhook Handling (for user commands/replies)
         if (request.method === 'POST') {
-             // Since Telegraf is removed, we simplify the webhook reply logic
              try {
                 const update = await request.json();
                 if (update.message && update.message.chat) {
                     const chatId = update.message.chat.id;
                     const text = update.message.text || "";
-                    
-                    // Reply back to the user who sent the message
                     const replyText = `ඔයා type කරපු දේ: <b>${text}</b>`;
                     await sendRawTelegramMessage(chatId, replyText);
                 }
                 return new Response('OK', { status: 200 });
             } catch (e) {
                  console.error('Webhook error:', e);
-                 return new Response('OK', { status: 200 }); // Always return OK to prevent Telegram retries
+                 return new Response('OK', { status: 200 });
             }
         }
 
-        return new Response('Forex Factory News Bot is ready. Use /trigger to test manually.', { status: 200 });
+        return new Response('Forex & Crypto News Bot is ready. Use /trigger to test manually.', { status: 200 });
     }
 };
+
