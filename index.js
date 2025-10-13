@@ -3,10 +3,10 @@ const { load } = require('cheerio');
 const moment = require('moment-timezone');
 
 // 🚨🚨 CRITICAL: ඔබගේ සැබෑ BOT TOKEN එක මෙහි ඇතුල් කරන්න! 🚨🚨
-const TELEGRAM_TOKEN = '8299929776:AAGKU7rkfakmDBXdgiGSWzAHPgLRJs-twZg'; 
+const TELEGRAM_TOKEN = '8299929776:AAGKU7rkfakmDBXdgiGSWzAHPKLRJs-twZg'; 
 
 // 🚨🚨 CRITICAL: පණිවිඩ ලැබිය යුතු CHAT ID එක මෙහි ඇතුල් කරන්න! 🚨🚨
-const CHAT_ID = '-1003177936060'; 
+const CHAT_ID = '-10031777936060'; 
 
 // --- Constants ---
 const COLOMBO_TIMEZONE = 'Asia/Colombo';
@@ -201,11 +201,23 @@ async function getLatestEconomicEvent() {
         // --- Impact Extraction: වඩාත් ශක්තිමත් selector එකක් භාවිතා කිරීම ---
         let impactText = "Unknown";
         // .impact-icon class එක සහිත සහ title attribute එක සහිත element එක සොයයි
-        const impactElement = impact_td.find('span.impact-icon[title], span[title]').first(); 
+        const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first(); 
 
         if (impactElement.length > 0) {
-            // title attribute එකෙන් Impact Text එක ලබා ගනී.
+            // 1. Try to get the explicit title first (this is the desired state)
             impactText = impactElement.attr('title') || "Unknown"; 
+            
+            // 2. If title is still Unknown, check CSS classes as a fallback
+            if (impactText === "Unknown") {
+                const classList = impactElement.attr('class') || "";
+                if (classList.includes('high')) {
+                    impactText = "High Impact Expected";
+                } else if (classList.includes('medium')) {
+                    impactText = "Medium Impact Expected";
+                } else if (classList.includes('low')) {
+                    impactText = "Low Impact Expected";
+                }
+            }
         }
         // ------------------------------------------------------------------
 
@@ -259,12 +271,13 @@ async function fetchEconomicNews(env) {
                 impactLevelText = "🟢 Low Impact News";
                 impactEmoji = "🟢";
                 break;
-            case "Non-Economic/Holiday": // නව impact type එකක් හසුකර ගනී
+            case "Non-Economic/Holiday": 
                 impactLevelText = "⚪ Non-Economic / Holiday";
                 impactEmoji = "⚪";
                 break;
+            case "Unknown": // If both title and class failed to give a specific impact
             default:
-                impactLevelText = `⚪ Unknown Impact (${event.impact})`; // නිකුත් වූ Impact string එක පෙන්වයි
+                impactLevelText = "⚪ Unknown Impact (Check Calendar)";
                 impactEmoji = "⚪";
         }
 
