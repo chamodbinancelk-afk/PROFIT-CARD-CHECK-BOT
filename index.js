@@ -1,14 +1,13 @@
-// --- Cloudflare Worker Dependencies ---
 const { load } = require('cheerio');
 const moment = require('moment-timezone');
 
 // 🚨🚨 CRITICAL: ඔබගේ සැබෑ BOT TOKEN එක මෙහි ඇතුල් කරන්න! 🚨🚨
-// 🛑🛑🛑 ඔබගේ පැරණි Token එක Telegram මගින් ප්‍රතික්ෂේප කර ඇත.
-// 🛑🛑🛑 කරුණාකර BotFather වෙතින් ලබාගත් නව Token එක මෙහි ඇතුල් කරන්න.
-const TELEGRAM_TOKEN = '8299929776:AAGxujSlDwIQwjzcMdQZ3eevMi5OE2_kBaE'; // <--- මෙතනට අලුත් TOKEN එක දමන්න!
+// ⚠️ මේ Token එක කලින් 401 Error එක දුන් Token එක විය හැක.
+// ⚠️ කරුණාකර BotFather වෙතින් ලබාගත් "නව" සහ "නිවැරදි" Token එක මෙහි ඇතුල් කරන්න.
+const TELEGRAM_TOKEN = '8299929776:AAGKU7rkfakmDBXdgiGSWzAHPgLRJs-twZg'; // <--- ඔබගේ නව Token එක මෙතනට දමන්න!
 
 // 🚨🚨 CRITICAL: පණිවිඩ ලැබිය යුතු CHAT ID එක මෙහි ඇතුල් කරන්න! 🚨🚨
-const CHAT_ID = '-10031777936060'; 
+const CHAT_ID = '-1003177936060'; 
 
 // --- Constants ---
 const COLOMBO_TIMEZONE = 'Asia/Colombo';
@@ -21,8 +20,8 @@ const HEADERS = {
 };
 
 // URLs
-const FF_NEWS_URL = "https://www.forexfactory.com/news";
-const FF_CALENDAR_URL = "https://www.forexfactory.com/calendar"; // Economic Events සඳහා
+const FF_NEWS_URL = "https://www.forexfactory.com/news"; // Fundamental News
+const FF_CALENDAR_URL = "https://www.forexfactory.com/calendar"; // Economic Events
 
 // --- KV KEYS ---
 // Fundamental News Keys
@@ -30,7 +29,7 @@ const LAST_HEADLINE_KEY = 'last_forex_headline';
 const LAST_FULL_MESSAGE_KEY = 'last_full_news_message'; 
 const LAST_IMAGE_URL_KEY = 'last_image_url'; 
 
-// Economic Calendar Keys
+// 🚨 NEW: Economic Calendar Keys
 const LAST_ECONOMIC_EVENT_ID_KEY = 'last_economic_event_id'; 
 const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message'; 
 
@@ -43,7 +42,7 @@ const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message';
  * Utility function to send raw messages via Telegram API.
  */
 async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
-    if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_NEW_TOKEN_HERE') {
+    if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN') {
         console.error("TELEGRAM_TOKEN is missing or not updated.");
         return;
     }
@@ -52,6 +51,7 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
     let payload = { chat_id: chatId, parse_mode: 'HTML' };
 
     if (imgUrl) {
+        // Telegram API requires the message to be in the 'caption' field for sendPhoto
         payload.photo = imgUrl;
         payload.caption = message;
     } else {
@@ -95,7 +95,8 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
  */
 async function readKV(env, key) {
     try {
-        const value = await env.NEWS_STATE.get(key);
+        // 🚨 CRITICAL: NEWS_STATE binding එක Cloudflare Dashboard එකේ තිබිය යුතුයි.
+        const value = await env.NEWS_STATE.get(key); 
         return value;
     } catch (e) {
         console.error(`KV Read Error (${key}):`, e);
@@ -112,7 +113,7 @@ async function writeKV(env, key, value) {
 }
 
 /**
- * Translation Function (Using Google Translate API)
+ * Translation Function (Google Translate API)
  */
 async function translateText(text) {
     const translationApiUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=si&dt=t&q=${encodeURIComponent(text)}`;
@@ -129,9 +130,8 @@ async function translateText(text) {
     }
 }
 
-
 // =================================================================
-// --- ECONOMIC CALENDAR LOGIC ---
+// --- 🚨 NEW: ECONOMIC CALENDAR LOGIC ---
 // =================================================================
 
 /**
@@ -151,6 +151,8 @@ function analyzeComparison(actual, previous) {
              };
         }
 
+        // Note: Economic events sometimes have the opposite reaction to Forex Factory's assumption
+        // but we will stick to the standard high/low movement logic for simplicity.
         if (a > p) {
             return {
                 comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`,
@@ -180,7 +182,6 @@ function analyzeComparison(actual, previous) {
  */
 async function getLatestEconomicEvent() {
     const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
-    // IMPORTANT: Check for scraping block status
     if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status} on calendar page. Scraping might be blocked.`);
 
     const html = await resp.text();
@@ -205,24 +206,17 @@ async function getLatestEconomicEvent() {
         const previous = previous_td.text().trim() || "0";
         
         if (!actual || actual === "-") {
-            continue;
+            continue; // Only process events that have a realized actual value
         }
         
-        // --- Impact Extraction: වඩාත් ශක්තිමත් selector එකක් භාවිතා කිරීම ---
+        // Robust Impact Extraction
         let impactText = "Unknown";
-        
-        // Find the impact icon element (span or div with impact-icon class)
         const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first(); 
 
         if (impactElement.length > 0) {
-            // 1. Try to get the explicit title first (e.g., "High Impact Expected")
             impactText = impactElement.attr('title') || "Unknown"; 
-            
-            // 2. If title is still Unknown, check CSS classes as a fallback
             if (impactText === "Unknown") {
                 const classList = impactElement.attr('class') || "";
-                
-                // Check for standard full impact class names
                 if (classList.includes('impact-icon--high') || classList.includes('high')) {
                     impactText = "High Impact Expected";
                 } else if (classList.includes('impact-icon--medium') || classList.includes('medium')) {
@@ -234,7 +228,6 @@ async function getLatestEconomicEvent() {
                 }
             }
         }
-        // ------------------------------------------------------------------
 
         return {
             id: eventId,
@@ -292,7 +285,6 @@ async function fetchEconomicNews(env) {
                 break;
             case "Unknown": 
             default:
-                // If it's still 'Unknown', use the generic message
                 impactLevelText = "⚪ Unknown Impact (Please Check Calendar)";
                 impactEmoji = "⚪";
         }
@@ -303,7 +295,6 @@ async function fetchEconomicNews(env) {
             `⏰ <b>Date & Time:</b> ${date_time}\n\n` +
             `🌍 <b>Currency:</b> ${event.currency}\n` +
             `📌 <b>Headline:</b> ${event.title}\n\n` +
-            `${impactEmoji} <b>Impact:</b> ${impactLevelText}\n\n` +
             `📈 <b>Actual:</b> ${event.actual}\n` +
             `📉 <b>Previous:</b> ${event.previous}\n\n` +
             `🔍 <b>Details:</b> ${comparison}\n\n` +
@@ -324,13 +315,12 @@ async function fetchEconomicNews(env) {
 
 
 // =================================================================
-// --- FUNDAMENTAL NEWS LOGIC ---
+// --- CORE FOREX NEWS LOGIC (Fundamental) ---
 // =================================================================
 
 async function getLatestForexNews() {
     const resp = await fetch(FF_NEWS_URL, { headers: HEADERS });
-    // IMPORTANT: Check for scraping block status
-    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status} on news page. Scraping might be blocked.`);
+    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status} on news page.`);
 
     const html = await resp.text();
     const $ = load(html);
@@ -347,7 +337,8 @@ async function getLatestForexNews() {
 
     const newsHtml = await newsResp.text();
     const $detail = load(newsHtml);
-    const imgUrl = $detail('img.attach').attr('src');
+    // Find the image URL (Forex Factory uses image links in news)
+    const imgUrl = $detail('img.attach').attr('src'); 
     const description = $detail('p.news__copy').text().trim() || "No description found.";
 
     return { headline, newsUrl, imgUrl, description };
@@ -396,10 +387,10 @@ async function fetchForexNews(env) {
 // =================================================================
 
 async function handleScheduledTasks(env) {
-    // 1. ECONOMIC CALENDAR EVENTS
+    // 1. ECONOMIC CALENDAR EVENTS (Checks for new realized events)
     await fetchEconomicNews(env); 
     
-    // 2. FUNDAMENTAL NEWS HEADLINES 
+    // 2. FUNDAMENTAL NEWS HEADLINES (Checks for new headlines)
     await fetchForexNews(env);
 }
 
@@ -426,11 +417,12 @@ export default {
         // Status check
         if (url.pathname === '/status') {
             const lastForex = await readKV(env, LAST_HEADLINE_KEY);
-            const lastEconomic = await readKV(env, LAST_ECONOMIC_EVENT_ID_KEY);
+            const lastEconomic = await readKV(env, LAST_ECONOMIC_EVENT_ID_KEY); // Reading the new key
+            
             return new Response(
                 `Forex Bot Worker is active.\n` + 
                 `Last Fundamental Headline: ${lastForex || 'N/A'}\n` +
-                `Last Economic Event ID: ${lastEconomic || 'N/A'}`, 
+                `Last Economic Event ID: ${lastEconomic || 'N/A'}`, // Showing both status keys
                 { status: 200 }
             );
         }
@@ -450,6 +442,7 @@ export default {
                     // Handle Commands
                     switch (command) {
                         case '/start':
+                            // Updated /start message to reflect both news types
                             replyText = 
                                 `<b>👋 Hello There !</b>\n\n` +
                                 `💁‍♂️ මේ BOT ගෙන් පුළුවන් ඔයාට <b>Fundamental News</b> සහ <b>Economic News</b> දෙකම සිංහලෙන් දැන ගන්න. News Update වෙද්දීම <b>C F NEWS MAIN CHANNEL</b> එකට යවනවා.\n\n` +
@@ -477,11 +470,17 @@ export default {
                             const lastFullMessage = await readKV(env, messageKey);
                             
                             if (lastFullMessage) {
-                                // Final message එකේ title එක වෙනස් කිරීම
-                                const finalMessage = `<b>📰 ${title}</b>\n\n${lastFullMessage}`;
-                                await sendRawTelegramMessage(chatId, finalMessage, lastImageUrl); 
+                                // We don't wrap the message, as the KV already contains the full formatted text.
+                                // If it's Economic, the message includes the title in the KV itself.
+                                // If it's Fundamental, the KV contains the message, and we optionally send the image.
+                                
+                                // Since both types of messages (Fundamental and Economic) are now saved with their own full formatting,
+                                // we can send the KV content directly. We only need to check if the KV value exists.
+                                await sendRawTelegramMessage(chatId, lastFullMessage, lastImageUrl); 
                             } else {
-                                replyText = "Sorry, no recent news has been processed yet. Please wait for the next update or try the /trigger endpoint.";
+                                replyText = (command === '/fundamental') 
+                                    ? "Sorry, no recent fundamental news has been processed yet. Please wait for the next update or try the /trigger endpoint."
+                                    : "Sorry, no recent economic event has been processed yet. Please wait for the next update or try the /trigger endpoint.";
                                 await sendRawTelegramMessage(chatId, replyText);
                             }
                             break;
