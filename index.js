@@ -10,7 +10,8 @@ const CHAT_ID = '-10031777936060';
 
 // --- Constants ---
 const COLOMBO_TIMEZONE = 'Asia/Colombo';
-const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Cloudflare Worker/ForexBot)' };
+// User-Agent එක නිවැරදිව යෙදීමෙන් block වීම වළක්වා ගත හැක
+const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36' };
 
 // URLs
 const FF_NEWS_URL = "https://www.forexfactory.com/news";
@@ -171,7 +172,8 @@ function analyzeComparison(actual, previous) {
  */
 async function getLatestEconomicEvent() {
     const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
-    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status} on calendar page`);
+    // IMPORTANT: Check for scraping block status
+    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status} on calendar page. Scraping might be blocked.`);
 
     const html = await resp.text();
     const $ = load(html);
@@ -201,11 +203,11 @@ async function getLatestEconomicEvent() {
         // --- Impact Extraction: වඩාත් ශක්තිමත් selector එකක් භාවිතා කිරීම ---
         let impactText = "Unknown";
         
-        // Find the impact icon element
+        // Find the impact icon element (span or div with impact-icon class)
         const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first(); 
 
         if (impactElement.length > 0) {
-            // 1. Try to get the explicit title first (this is the desired state)
+            // 1. Try to get the explicit title first (e.g., "High Impact Expected")
             impactText = impactElement.attr('title') || "Unknown"; 
             
             // 2. If title is still Unknown, check CSS classes as a fallback
@@ -213,13 +215,13 @@ async function getLatestEconomicEvent() {
                 const classList = impactElement.attr('class') || "";
                 
                 // Check for standard full impact class names
-                if (classList.includes('impact-icon--high')) {
+                if (classList.includes('impact-icon--high') || classList.includes('high')) {
                     impactText = "High Impact Expected";
-                } else if (classList.includes('impact-icon--medium')) {
+                } else if (classList.includes('impact-icon--medium') || classList.includes('medium')) {
                     impactText = "Medium Impact Expected";
-                } else if (classList.includes('impact-icon--low')) {
+                } else if (classList.includes('impact-icon--low') || classList.includes('low')) {
                     impactText = "Low Impact Expected";
-                } else if (classList.includes('impact-icon--holiday')) {
+                } else if (classList.includes('impact-icon--holiday') || classList.includes('holiday')) {
                     impactText = "Non-Economic/Holiday";
                 }
             }
@@ -232,7 +234,7 @@ async function getLatestEconomicEvent() {
             title: title_td.text().trim(),
             actual: actual,
             previous: previous,
-            impact: impactText // යාවත්කාලීන කළ impact text එක return වේ.
+            impact: impactText 
         };
     }
     
@@ -282,7 +284,7 @@ async function fetchEconomicNews(env) {
                 break;
             case "Unknown": 
             default:
-                // If it's still 'Unknown' or any other unhandled string, use the generic message
+                // If it's still 'Unknown', use the generic message
                 impactLevelText = "⚪ Unknown Impact (Please Check Calendar)";
                 impactEmoji = "⚪";
         }
