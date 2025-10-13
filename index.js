@@ -3,7 +3,9 @@ const { load } = require('cheerio');
 const moment = require('moment-timezone');
 
 // 🚨🚨 CRITICAL: ඔබගේ සැබෑ BOT TOKEN එක මෙහි ඇතුල් කරන්න! 🚨🚨
-const TELEGRAM_TOKEN = '8299929776:AAGKU7rkfakmDBXdgiGSWzAHPKLRJs-twZg'; 
+// 🛑🛑🛑 ඔබගේ පැරණි Token එක Telegram මගින් ප්‍රතික්ෂේප කර ඇත.
+// 🛑🛑🛑 කරුණාකර BotFather වෙතින් ලබාගත් නව Token එක මෙහි ඇතුල් කරන්න.
+const TELEGRAM_TOKEN = '8299929776:AAGxujSlDwIQwjzcMdQZ3eevMi5OE2_kBaE'; // <--- මෙතනට අලුත් TOKEN එක දමන්න!
 
 // 🚨🚨 CRITICAL: පණිවිඩ ලැබිය යුතු CHAT ID එක මෙහි ඇතුල් කරන්න! 🚨🚨
 const CHAT_ID = '-10031777936060'; 
@@ -41,7 +43,7 @@ const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message';
  * Utility function to send raw messages via Telegram API.
  */
 async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
-    if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN') {
+    if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_NEW_TOKEN_HERE') {
         console.error("TELEGRAM_TOKEN is missing or not updated.");
         return;
     }
