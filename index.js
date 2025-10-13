@@ -10,8 +10,13 @@ const CHAT_ID = '-10031777936060';
 
 // --- Constants ---
 const COLOMBO_TIMEZONE = 'Asia/Colombo';
-// User-Agent එක නිවැරදිව යෙදීමෙන් block වීම වළක්වා ගත හැක
-const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36' };
+// Scraping Block වීම වළක්වා ගැනීමට ශක්තිමත් Headers භාවිතා කිරීම.
+const HEADERS = { 
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Referer': 'https://www.forexfactory.com/',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+};
 
 // URLs
 const FF_NEWS_URL = "https://www.forexfactory.com/news";
@@ -70,6 +75,7 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
 
             if (!response.ok) {
                 const errorText = await response.text();
+                // ⚠️ Error Log එක මෙතනින් දැකගත හැක.
                 console.error(`Telegram API Error (${apiMethod}): ${response.status} - ${errorText}`);
                 break;
             }
@@ -321,7 +327,8 @@ async function fetchEconomicNews(env) {
 
 async function getLatestForexNews() {
     const resp = await fetch(FF_NEWS_URL, { headers: HEADERS });
-    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+    // IMPORTANT: Check for scraping block status
+    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status} on news page. Scraping might be blocked.`);
 
     const html = await resp.text();
     const $ = load(html);
