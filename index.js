@@ -200,34 +200,36 @@ export default {
 
         // Webhook Handling (for Telegram messages)
         if (request.method === 'POST') {
+        // ... (සියලුම ඉහළ කොටස් එලෙසම තිබිය යුතුය)
+// ...
+
+        // Webhook Handling (for Telegram messages)
+        if (request.method === 'POST') {
              try {
                 const update = await request.json();
                 if (update.message && update.message.chat) {
                     const chatId = update.message.chat.id;
-                    const text = update.message.text || "";
+                    // Ensure text is trimmed and converted to lowercase for comparison
+                    const text = update.message.text ? update.message.text.trim().toLowerCase() : "";
                     
                     let replyText = "";
 
-                    // 🚨 NEW: Handle /start command
-                    if (text.toLowerCase() === '/start') {
+                    // 🚨 NEW: Handle /start command with corrected HTML and String Concatenation
+                    if (text === '/start') {
                         replyText = 
-                            `<b>👋 Hello There ! <b>\n\n`  +
+                            `<b>👋 Hello There !</b>\n\n` +
+                            `💁‍♂️ මේ BOT ගෙන් පුළුවන් ඔයාට <b>Fundamental News</b> එකක් ආපු ගමන්ම සිංහලෙන් දැන ගන්න. ඒ කියන්නේ මෙහෙමයි, අද දවසේ තියෙන <b>Fundamental News</b> හැම එකක්ම මේ BOT News Update වෙද්දීම <b>C F NEWS MAIN CHANNEL</b> එකට යවනවා.\n\n` +
+                            `🙋‍♂️ තව, ඔයාලට පුළුවන් මේ BOT ගේ තියෙන Commands වලින් Last News , Last Economic News වගේ දේවල් බලාගන්න. Commands වල Usage එක මෙහෙමයි👇\n\n` +
+                            `◇ <code>/fundamental</code> :- 📰 Last Fundamental News\n` +
+                            `◇ <code>/economic</code> :- 📁 Last Economic News\n\n` + 
+                            `🎯 මේ BOT පැය 24ම Active එකේ තියෙනවා, ඒ වගේම Economic News එකක් දාපු ගමන් මේ BOT ඒක ඒ වෙලාවේම <b>C F NEWS MAIN CHANNEL</b> එකට යවනවා.🔔.. ඒ නිසා මේ BOT Use කරද්දී ඔයාට පුළුවන් හැම News එකක් ගැනම Update එකේ ඉන්න. ✍️\n\n` +
+                            `◇───────────────◇\n\n` +
+                            `🚀 <b>Developer :</b> @chamoddeshan\n` +
+                            `🔥 <b>Mr Chamo Corporation ©</b>\n\n` + // © සංකේතය එකතු කළා
+                            `◇───────────────◇`;
+                            
+                        // Note: I used <code> tags for commands for better display in Telegram.
 
-`💁‍♂️ මේ BOT ගෙන් පුළුවන් ඔයාට <b>Fundamental News<b> එකක් ආපු ගමන්ම සිංහලෙන් දැන ගන්න. ඒ කියන්නේ මෙහෙමයි, අද දවසේ තියෙන <b>Fundamental News<b> හැම එකක්ම මේ BOT News Update වෙද්දීම <b>C F NEWS MAIN CHANNEL<b> එකට යවනවා.\n\n`  +
-
-`🙋‍♂️ තව, ඔයාලට පුළුවන් මේ BOT ගේ තියෙන Commands වලින් Last News , Last Economic News වගේ දේවල් බලාගන්න. Commands වල Usage එක මෙහෙමයි👇'\n\n`  +
-
-`◇ /fundamental  :-  📰 Last Fundamental  News\n`  +
-`◇ /economic  :-  📁 Last Economic News\n\n`  + 
-
-`🎯 මේ BOT පැය 24ම Active එකේ තියෙනවා, ඒ  වගේම Economic News එකක් දාපු ගමන්  මේ  BOT ඒක ඒ වෙලාවේම BOT <b>C F NEWS MAIN CHANNEL<b> එකට යවනවා.🔔.. ඒ නිසා මේ BOT Use කරද්දී ඔයාට පුළුවන් හැම News එකක් ගැනම Update එකේ ඉන්න. ✍️\n\n`  +
-
-`◇───────────────◇\n\n`  +
-
-`🚀 <b>Dᴇᴠᴇʟᴏᴘᴇʀ :<b> @chamoddeshan\n`  +
-`🔥 <b>Mr Chamo Corporation ©️<b>\n\n`  +
-
-`◇───────────────◇` ;
                     } else {
                         // Default reply for any other message
                         replyText = `ඔබට ස්වයංක්‍රීයව පුවත් ලැබෙනු ඇත. වැඩි විස්තර සඳහා <b>/start</b> යොදන්න.`;
