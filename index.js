@@ -18,13 +18,13 @@ const FF_CALENDAR_URL = "https://www.forexfactory.com/calendar"; // Economic Eve
 
 // --- KV KEYS ---
 // Fundamental News Keys
-const LAST_HEADLINE_KEY = 'last_forex_headline'; // අවසන් Fundamental headline එක
-const LAST_FULL_MESSAGE_KEY = 'last_full_news_message'; // අවසන් Fundamental message එකේ සම්පූර්ණ content එක
-const LAST_IMAGE_URL_KEY = 'last_image_url'; // අවසන් Fundamental image URL එක
+const LAST_HEADLINE_KEY = 'last_forex_headline'; 
+const LAST_FULL_MESSAGE_KEY = 'last_full_news_message'; 
+const LAST_IMAGE_URL_KEY = 'last_image_url'; 
 
-// Economic Calendar Keys (New)
-const LAST_ECONOMIC_EVENT_ID_KEY = 'last_economic_event_id'; // අවසන් Economic Event ID එක
-const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message'; // අවසන් Economic Event message එකේ සම්පූර්ණ content එක
+// Economic Calendar Keys
+const LAST_ECONOMIC_EVENT_ID_KEY = 'last_economic_event_id'; 
+const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message'; // Economic command සඳහා මෙය භාවිතා වේ
 
 
 // =================================================================
@@ -86,7 +86,6 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
  */
 async function readKV(env, key) {
     try {
-        // Assume env.NEWS_STATE is bound to a KV namespace
         const value = await env.NEWS_STATE.get(key);
         return value;
     } catch (e) {
@@ -123,18 +122,14 @@ async function translateText(text) {
 
 
 // =================================================================
-// --- ECONOMIC CALENDAR LOGIC (From Python Code) ---
+// --- ECONOMIC CALENDAR LOGIC ---
 // =================================================================
 
 /**
- * Python හි analyze_comparison තර්කය JavaScript වෙත පරිවර්තනය කරයි.
- * @param {string} actual - Actual value
- * @param {string} previous - Previous value
- * @returns {{comparison: string, reaction: string}} - සිංහල විශ්ලේෂණ ප්‍රතිඵලය.
+ * Economic Event එකේ Actual/Previous සංසන්දනය කර සිංහල විශ්ලේෂණය ලබා දෙයි.
  */
 function analyzeComparison(actual, previous) {
     try {
-        // දත්ත පිරිසිදු කිරීමේ helper function
         const cleanAndParse = (value) => parseFloat(value.replace(/%|,/g, '').trim() || '0');
 
         const a = cleanAndParse(actual);
@@ -147,11 +142,10 @@ function analyzeComparison(actual, previous) {
              };
         }
 
-        // --- Core Logic (සිංහල විශ්ලේෂණය) ---
         if (a > p) {
             return {
                 comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`,
-                reaction: "📈 Forex සහ Crypto වෙළඳපොළ ඉහළට යා හැකියි (ධනාත්මක බලපෑම්)" // (Better than Previous = Typically Positive)
+                reaction: "📈 Forex සහ Crypto වෙළඳපොළ ඉහළට යා හැකියි (ධනාත්මක බලපෑම්)" 
             };
         } else if (a < p) {
             return {
@@ -183,19 +177,16 @@ async function getLatestEconomicEvent() {
     const $ = load(html);
     const rows = $('.calendar__row');
 
-    // නවතම events වලින් පටන් ගෙන reverse අනුපිළිවෙලට පරීක්ෂා කිරීම
     for (let i = rows.length - 1; i >= 0; i--) {
         const row = $(rows[i]);
         const eventId = row.attr("data-event-id");
 
-        // --- Data Extraction and Filtering: අවශ්‍ය විස්තර පමණක් ලබා ගනී ---
         const currency_td = row.find(".calendar__currency");
         const title_td = row.find(".calendar__event");
         const actual_td = row.find(".calendar__actual");
         const previous_td = row.find(".calendar__previous");
         const impact_td = row.find('.calendar__impact');
         
-        // Data integrity check
         if (!eventId || !currency_td.length || !title_td.length || !actual_td.length || !previous_td.length || !impact_td.length) {
             continue;
         }
@@ -203,23 +194,21 @@ async function getLatestEconomicEvent() {
         const actual = actual_td.text().trim();
         const previous = previous_td.text().trim() || "0";
         
-        // Filter: 'Actual' අගයක් නිකුත් කර ඇති events පමණක් සලකා බැලීම
         if (!actual || actual === "-") {
             continue;
         }
         
-        // Extract impact text from title attribute (High, Medium, Low Impact Expected)
+        // Impact Text එක නිවැරදිව Title Attribute එකෙන් ලබා ගැනීම
         const impactSpan = impact_td.find('span[title]');
         const impactText = impactSpan.attr('title') || "Unknown";
 
-        // අවශ්‍ය විස්තර පමණක් return කිරීම (අනෙක් HTML දත්ත ඉවත් වේ)
         return {
             id: eventId,
             currency: currency_td.text().trim(),
             title: title_td.text().trim(),
             actual: actual,
             previous: previous,
-            impact: impactText
+            impact: impactText // Impact text නිවැරදිව return වේ.
         };
     }
     
@@ -247,7 +236,8 @@ async function fetchEconomicNews(env) {
         const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
         const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
 
-        let impactLevelText = "⚪ Unknown";
+        // Impact level එක පදනම් කරගෙන Text සහ Emoji සකස් කිරීම
+        let impactLevelText = "⚪ Unknown Impact";
         let impactEmoji = "⚪";
         switch (event.impact) {
             case "High Impact Expected":
@@ -262,9 +252,12 @@ async function fetchEconomicNews(env) {
                 impactLevelText = "🟢 Low Impact News";
                 impactEmoji = "🟢";
                 break;
+            default:
+                impactLevelText = "⚪ Unknown Impact";
+                impactEmoji = "⚪";
         }
 
-        // Final Sinhala message (HTML format)
+        // Final Sinhala message (HTML format) - Impact Level එක ඇතුළත් වේ
         const message = 
             `<b>🚨 Economic Calendar Release 🔔</b>\n\n` +
             `⏰ <b>Date & Time:</b> ${date_time}\n\n` +
@@ -291,7 +284,7 @@ async function fetchEconomicNews(env) {
 
 
 // =================================================================
-// --- FUNDAMENTAL NEWS LOGIC (User's Original Code) ---
+// --- FUNDAMENTAL NEWS LOGIC ---
 // =================================================================
 
 async function getLatestForexNews() {
@@ -316,7 +309,6 @@ async function getLatestForexNews() {
     const imgUrl = $detail('img.attach').attr('src');
     const description = $detail('p.news__copy').text().trim() || "No description found.";
 
-    // --- Data Filtering: Only the necessary parts of the article are returned ---
     return { headline, newsUrl, imgUrl, description };
 }
 
@@ -334,7 +326,6 @@ async function fetchForexNews(env) {
             return; // EXIT - Prevents duplication
         }
         
-        // --- ONLY PROCEED IF THE HEADLINE IS NEW ---
         await writeKV(env, LAST_HEADLINE_KEY, currentHeadline);
 
         // Generate the message
@@ -349,7 +340,7 @@ async function fetchForexNews(env) {
 
         // Save the FULL message and image URL to KV for the command response
         await writeKV(env, LAST_FULL_MESSAGE_KEY, message);
-        await writeKV(env, LAST_IMAGE_URL_KEY, news.imgUrl || ''); // Save image URL for /fundamental command
+        await writeKV(env, LAST_IMAGE_URL_KEY, news.imgUrl || ''); 
 
         // Sending the news message to the main channel
         await sendRawTelegramMessage(CHAT_ID, message, news.imgUrl);
@@ -364,10 +355,10 @@ async function fetchForexNews(env) {
 // =================================================================
 
 async function handleScheduledTasks(env) {
-    // 1. ECONOMIC CALENDAR EVENTS (Checks for Actual/Previous release)
+    // 1. ECONOMIC CALENDAR EVENTS
     await fetchEconomicNews(env); 
     
-    // 2. FUNDAMENTAL NEWS HEADLINES (Checks for new articles)
+    // 2. FUNDAMENTAL NEWS HEADLINES 
     await fetchForexNews(env);
 }
 
@@ -445,6 +436,7 @@ export default {
                             const lastFullMessage = await readKV(env, messageKey);
                             
                             if (lastFullMessage) {
+                                // Final message එකේ title එක වෙනස් කිරීම
                                 const finalMessage = `<b>📰 ${title}</b>\n\n${lastFullMessage}`;
                                 await sendRawTelegramMessage(chatId, finalMessage, lastImageUrl); 
                             } else {
