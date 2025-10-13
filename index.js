@@ -24,7 +24,7 @@ const LAST_IMAGE_URL_KEY = 'last_image_url';
 
 // Economic Calendar Keys
 const LAST_ECONOMIC_EVENT_ID_KEY = 'last_economic_event_id'; 
-const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message'; // Economic command සඳහා මෙය භාවිතා වේ
+const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message'; 
 
 
 // =================================================================
@@ -198,9 +198,16 @@ async function getLatestEconomicEvent() {
             continue;
         }
         
-        // Impact Text එක නිවැරදිව Title Attribute එකෙන් ලබා ගැනීම
-        const impactSpan = impact_td.find('span[title]');
-        const impactText = impactSpan.attr('title') || "Unknown";
+        // --- Impact Extraction: වඩාත් ශක්තිමත් selector එකක් භාවිතා කිරීම ---
+        let impactText = "Unknown";
+        // .impact-icon class එක සහිත සහ title attribute එක සහිත element එක සොයයි
+        const impactElement = impact_td.find('span.impact-icon[title], span[title]').first(); 
+
+        if (impactElement.length > 0) {
+            // title attribute එකෙන් Impact Text එක ලබා ගනී.
+            impactText = impactElement.attr('title') || "Unknown"; 
+        }
+        // ------------------------------------------------------------------
 
         return {
             id: eventId,
@@ -208,7 +215,7 @@ async function getLatestEconomicEvent() {
             title: title_td.text().trim(),
             actual: actual,
             previous: previous,
-            impact: impactText // Impact text නිවැරදිව return වේ.
+            impact: impactText // යාවත්කාලීන කළ impact text එක return වේ.
         };
     }
     
@@ -252,8 +259,12 @@ async function fetchEconomicNews(env) {
                 impactLevelText = "🟢 Low Impact News";
                 impactEmoji = "🟢";
                 break;
+            case "Non-Economic/Holiday": // නව impact type එකක් හසුකර ගනී
+                impactLevelText = "⚪ Non-Economic / Holiday";
+                impactEmoji = "⚪";
+                break;
             default:
-                impactLevelText = "⚪ Unknown Impact";
+                impactLevelText = `⚪ Unknown Impact (${event.impact})`; // නිකුත් වූ Impact string එක පෙන්වයි
                 impactEmoji = "⚪";
         }
 
