@@ -200,7 +200,8 @@ async function getLatestEconomicEvent() {
         
         // --- Impact Extraction: වඩාත් ශක්තිමත් selector එකක් භාවිතා කිරීම ---
         let impactText = "Unknown";
-        // .impact-icon class එක සහිත සහ title attribute එක සහිත element එක සොයයි
+        
+        // Find the impact icon element
         const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first(); 
 
         if (impactElement.length > 0) {
@@ -210,12 +211,16 @@ async function getLatestEconomicEvent() {
             // 2. If title is still Unknown, check CSS classes as a fallback
             if (impactText === "Unknown") {
                 const classList = impactElement.attr('class') || "";
-                if (classList.includes('high')) {
+                
+                // Check for standard full impact class names
+                if (classList.includes('impact-icon--high')) {
                     impactText = "High Impact Expected";
-                } else if (classList.includes('medium')) {
+                } else if (classList.includes('impact-icon--medium')) {
                     impactText = "Medium Impact Expected";
-                } else if (classList.includes('low')) {
+                } else if (classList.includes('impact-icon--low')) {
                     impactText = "Low Impact Expected";
+                } else if (classList.includes('impact-icon--holiday')) {
+                    impactText = "Non-Economic/Holiday";
                 }
             }
         }
@@ -275,9 +280,10 @@ async function fetchEconomicNews(env) {
                 impactLevelText = "⚪ Non-Economic / Holiday";
                 impactEmoji = "⚪";
                 break;
-            case "Unknown": // If both title and class failed to give a specific impact
+            case "Unknown": 
             default:
-                impactLevelText = "⚪ Unknown Impact (Check Calendar)";
+                // If it's still 'Unknown' or any other unhandled string, use the generic message
+                impactLevelText = "⚪ Unknown Impact (Please Check Calendar)";
                 impactEmoji = "⚪";
         }
 
