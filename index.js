@@ -52,15 +52,14 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
         if (!response.ok) {
             const errorText = await response.text();
             console.error(`Telegram API Error (${apiMethod}): ${response.status} - ${errorText}`);
+            // Telegram API error messages will no longer spam the channel
         }
     } catch (error) {
         console.error("Error sending message to Telegram:", error);
     }
 }
 
-/**
- * KV Helper Functions
- */
+// ... (readLastHeadlineKV, writeLastHeadlineKV, and translateText remain the same)
 async function readLastHeadlineKV(env, key) {
     try {
         const last = await env.NEWS_STATE.get(key);
@@ -79,9 +78,6 @@ async function writeLastHeadlineKV(env, key, headline) {
     }
 }
 
-/**
- * Translation Function
- */
 async function translateText(text) {
     const translationApiUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=si&dt=t&q=${encodeURIComponent(text)}`;
     try {
@@ -105,7 +101,6 @@ async function getLatestForexNews() {
 
     const html = await resp.text();
     const $ = load(html);
-    // Selector to find the latest news link (used previously)
     const newsLinkTag = $('a[href^="/news/"]').not('a[href$="/hit"]').first();
 
     if (newsLinkTag.length === 0) return null;
@@ -126,37 +121,34 @@ async function getLatestForexNews() {
 }
 
 async function fetchForexNews(env) {
-    const debugChatId = CHAT_ID;
     try {
         const news = await getLatestForexNews();
-        if (!news) {
-            await sendRawTelegramMessage(debugChatId, `🟢 <b>SUCCESS (No New Forex):</b> Scraper ran, but no new headline found.`);
-            return;
-        }
+        if (!news) return;
 
         const lastHeadline = await readLastHeadlineKV(env, LAST_HEADLINE_KEY);
         if (news.headline === lastHeadline) {
             console.info(`Forex: No new headline. Last: ${news.headline}`);
-            await sendRawTelegramMessage(debugChatId, `🟢 <b>SUCCESS (No New Forex):</b> Scraper ran, but headline is same as previous.`);
-            return;
+            return; // No new message if headline is the same
         }
 
         await writeLastHeadlineKV(env, LAST_HEADLINE_KEY, news.headline);
         const description_si = await translateText(news.description);
         const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
         
-        const message = `<b>💵 Fundamental News (Forex/සිංහල)</b>\n\n` +
+        const message = `<b>💵 Fundamental News (සිංහල)</b>\n\n` +
                         `<b>⏰ Date & Time:</b> ${date_time}\n\n` +
                         `<b>🌎 Headline (English):</b> ${news.headline}\n\n` +
                         `<b>🔥 සිංහල:</b> ${description_si}\n\n` +
                         `<a href="${news.newsUrl}">Read Full Article</a>\n\n` +
-                        `🚀 <i>Dev: Mr Chamo 🇱🇰</i>`;
+                        `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
 
+        // 🚨 CRITICAL CHANGE: Only sending the news message to the main channel
         await sendRawTelegramMessage(CHAT_ID, message, news.imgUrl);
-        await sendRawTelegramMessage(debugChatId, `✅ <b>SUCCESS (NEW - Forex):</b> Deployed: <b>${news.headline}</b>`);
+
+        // 🚨 DEBUGGING MESSAGES ARE NOW REMOVED/SILENT!
     } catch (error) {
         console.error("An error occurred during FOREX task:", error);
-        await sendRawTelegramMessage(debugChatId, `❌ <b>CRITICAL FOREX ERROR:</b> ${error.message}`);
+        // We do not send the error message to the channel to keep it clean.
     }
 }
 
@@ -186,7 +178,7 @@ export default {
         // Manual trigger for testing the scheduled task
         if (url.pathname === '/trigger') {
             await handleScheduledTasks(env);
-            return new Response("Scheduled task (Forex Only) manually triggered. Check Telegram for debug status.", { status: 200 });
+            return new Response("Scheduled task (Forex Only) manually triggered. Check your Telegram channel for the news (no debug message will be sent).", { status: 200 });
         }
         
         // Status check
