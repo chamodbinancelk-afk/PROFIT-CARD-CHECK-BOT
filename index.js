@@ -20,10 +20,8 @@ const LAST_HEADLINE_KEY = 'last_forex_headline';
 // =================================================================
 // --- UTILITY FUNCTIONS ---
 // =================================================================
-
-/**
- * Utility function to send raw messages via Telegram API.
- */
+// (sendRawTelegramMessage, readLastHeadlineKV, writeLastHeadlineKV, translateText functions remain the same)
+// ...
 async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
     if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN') {
         console.error("TELEGRAM_TOKEN is missing or not updated.");
@@ -52,14 +50,12 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
         if (!response.ok) {
             const errorText = await response.text();
             console.error(`Telegram API Error (${apiMethod}): ${response.status} - ${errorText}`);
-            // Telegram API error messages will no longer spam the channel
         }
     } catch (error) {
         console.error("Error sending message to Telegram:", error);
     }
 }
 
-// ... (readLastHeadlineKV, writeLastHeadlineKV, and translateText remain the same)
 async function readLastHeadlineKV(env, key) {
     try {
         const last = await env.NEWS_STATE.get(key);
@@ -89,6 +85,7 @@ async function translateText(text) {
         return `[Translation Failed: ${text}]`;
     }
 }
+// ... (utility functions end)
 
 
 // =================================================================
@@ -110,7 +107,7 @@ async function getLatestForexNews() {
     
     // Fetch detail page
     const newsResp = await fetch(newsUrl, { headers: HEADERS });
-    if (!newsResp.ok) throw new Error(`HTTP error! status: ${newsResp.status} on detail page`);
+    if (!newsResp.ok) throw new Error(`HTTP error! status: ${resp.status} on detail page`);
 
     const newsHtml = await newsResp.text();
     const $detail = load(newsHtml);
@@ -122,63 +119,62 @@ async function getLatestForexNews() {
 
 async function fetchForexNews(env) {
     try {
+        // 1. Get the latest news from the website
         const news = await getLatestForexNews();
         if (!news) return;
 
+        // 2. Read the last saved headline from KV
         const lastHeadline = await readLastHeadlineKV(env, LAST_HEADLINE_KEY);
+
+        // 3. 🚨 CRITICAL CHECK: If headlines match, STOP and do nothing.
         if (news.headline === lastHeadline) {
             console.info(`Forex: No new headline. Last: ${news.headline}`);
-            return; // No new message if headline is the same
+            return; // EXIT - Prevents duplication
         }
+        
+        // --- ONLY PROCEED IF THE HEADLINE IS NEW ---
 
+        // 4. Save the NEW headline to KV
         await writeLastHeadlineKV(env, LAST_HEADLINE_KEY, news.headline);
+
+        // 5. Generate and send the message
         const description_si = await translateText(news.description);
         const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
         
-        const message = `<b>💵 Fundamental News (සිංහල)</b>\n\n` +
+        const message = `<b>💵 Fundamental News (Forex/සිංහල)</b>\n\n` +
                         `<b>⏰ Date & Time:</b> ${date_time}\n\n` +
                         `<b>🌎 Headline (English):</b> ${news.headline}\n\n` +
                         `<b>🔥 සිංහල:</b> ${description_si}\n\n` +
                         `<a href="${news.newsUrl}">Read Full Article</a>\n\n` +
                         `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
 
-        // 🚨 CRITICAL CHANGE: Only sending the news message to the main channel
         await sendRawTelegramMessage(CHAT_ID, message, news.imgUrl);
-
-        // 🚨 DEBUGGING MESSAGES ARE NOW REMOVED/SILENT!
     } catch (error) {
         console.error("An error occurred during FOREX task:", error);
-        // We do not send the error message to the channel to keep it clean.
     }
 }
 
 // =================================================================
 // --- CLOUDFLARE WORKER HANDLERS ---
+// (These handlers remain the same)
 // =================================================================
 
 async function handleScheduledTasks(env) {
-    // Only run the Forex task
     await fetchForexNews(env);
 }
 
 export default {
-    /**
-     * Handles scheduled events (Cron trigger)
-     */
     async scheduled(event, env, ctx) {
         ctx.waitUntil(handleScheduledTasks(env));
     },
 
-    /**
-     * Handles Fetch requests (Webhook and Status/Trigger)
-     */
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
 
-        // Manual trigger for testing the scheduled task
+        // Manual trigger
         if (url.pathname === '/trigger') {
             await handleScheduledTasks(env);
-            return new Response("Scheduled task (Forex Only) manually triggered. Check your Telegram channel for the news (no debug message will be sent).", { status: 200 });
+            return new Response("Scheduled task (Forex Only) manually triggered. Check your Telegram channel for the news (if new).", { status: 200 });
         }
         
         // Status check
@@ -187,7 +183,7 @@ export default {
             return new Response(`Forex Bot Worker is active.\nLast Forex Headline: ${lastForex || 'N/A'}`, { status: 200 });
         }
 
-        // Webhook Handling (for user commands/replies)
+        // Webhook Handling
         if (request.method === 'POST') {
              try {
                 const update = await request.json();
@@ -203,6 +199,11 @@ export default {
                  return new Response('OK', { status: 200 });
             }
         }
+
+        return new Response('Forex News Bot is ready. Use /trigger to test manually.', { status: 200 });
+    }
+};
+
 
         return new Response('Forex News Bot is ready. Use /trigger to test manually.', { status: 200 });
     }
