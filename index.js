@@ -7,12 +7,15 @@ const TELEGRAM_TOKEN = '8299929776:AAGKU7rkfakmDBXdgiGSWzAHPgLRJs-twZg';
 // 🚨🚨 CRITICAL: පණිවිඩ ලැබිය යුතු CHAT ID එක මෙහි ඇතුල් කරන්න! 🚨🚨
 const CHAT_ID = '-1003177936060'; 
 
+
 const COLOMBO_TIMEZONE = 'Asia/Colombo';
 const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Cloudflare Worker)' };
 const FF_URL = "https://www.forexfactory.com/news";
 
-// --- KV KEY ---
+// --- KV KEYS ---
 const LAST_HEADLINE_KEY = 'last_forex_headline';
+// NEW KEY: Saves the complete, formatted Telegram message content
+const LAST_FULL_MESSAGE_KEY = 'last_full_news_message';
 
 
 // =================================================================
@@ -40,38 +43,54 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
 
     const apiURL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/${apiMethod}`;
     
-    try {
-        const response = await fetch(apiURL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+    // We will implement exponential backoff for robustness
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            const response = await fetch(apiURL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`Telegram API Error (${apiMethod}): ${response.status} - ${errorText}`);
+            if (response.status === 429) {
+                // Rate limit hit, wait longer and retry
+                const delay = Math.pow(2, attempt) * 1000;
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue; 
+            }
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error(`Telegram API Error (${apiMethod}): ${response.status} - ${errorText}`);
+                break; // Exit loop on non-rate limit errors
+            }
+            return; // Success
+        } catch (error) {
+            console.error("Error sending message to Telegram:", error);
+            // Wait and retry on network errors
+            const delay = Math.pow(2, attempt) * 1000;
+            await new Promise(resolve => setTimeout(resolve, delay));
         }
-    } catch (error) {
-        console.error("Error sending message to Telegram:", error);
     }
 }
 
 /**
  * KV Helper Functions
+ * Renamed to be more general for both full message and headline storage.
  */
-async function readLastHeadlineKV(env, key) {
+async function readKV(env, key) {
     try {
-        const last = await env.NEWS_STATE.get(key);
-        return last;
+        const value = await env.NEWS_STATE.get(key);
+        return value;
     } catch (e) {
         console.error(`KV Read Error (${key}):`, e);
         return null;
     }
 }
 
-async function writeLastHeadlineKV(env, key, headline) {
+async function writeKV(env, key, value) {
     try {
-        await env.NEWS_STATE.put(key, headline);
+        await env.NEWS_STATE.put(key, value);
     } catch (e) {
         console.error(`KV Write Error (${key}):`, e);
     }
@@ -85,7 +104,11 @@ async function translateText(text) {
     try {
         const response = await fetch(translationApiUrl);
         const data = await response.json();
-        return data[0].map(item => item[0]).join('');
+        // Check if data structure is valid before accessing indices
+        if (data && data[0] && Array.isArray(data[0])) {
+            return data[0].map(item => item[0]).join('');
+        }
+        throw new Error("Invalid translation response structure.");
     } catch (e) {
         console.error('Translation API Error. Using original text.', e);
         return `[Translation Failed: ${text}]`;
@@ -128,12 +151,12 @@ async function fetchForexNews(env) {
         const news = await getLatestForexNews();
         if (!news) return;
 
-        // 2. Read the last saved headline from KV
-        const lastHeadline = await readLastHeadlineKV(env, LAST_HEADLINE_KEY);
+        // 2. Read the last saved headline from KV for duplication check
+        const lastHeadline = await readKV(env, LAST_HEADLINE_KEY);
 
         // 3. CRITICAL CHECK: Trim the KV value before comparison
         const currentHeadline = news.headline;
-        const cleanLastHeadline = lastHeadline ? lastHeadline.trim() : null; // Ensure lastHeadline is also clean
+        const cleanLastHeadline = lastHeadline ? lastHeadline.trim() : null; 
 
         if (currentHeadline === cleanLastHeadline) {
             console.info(`Forex: No new headline. Last: ${currentHeadline}`);
@@ -142,10 +165,10 @@ async function fetchForexNews(env) {
         
         // --- ONLY PROCEED IF THE HEADLINE IS NEW ---
 
-        // 4. Save the NEW headline (which is already trimmed) to KV
-        await writeLastHeadlineKV(env, LAST_HEADLINE_KEY, currentHeadline);
+        // 4. Save the NEW headline for future checks
+        await writeKV(env, LAST_HEADLINE_KEY, currentHeadline);
 
-        // 5. Generate and send the message
+        // 5. Generate the message
         const description_si = await translateText(news.description);
         const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
         
@@ -155,7 +178,10 @@ async function fetchForexNews(env) {
                         `<b>🔥 සිංහල:</b> ${description_si}\n\n` +
                         `<b>🚀 Dev: Mr Chamo 🇱🇰</b>`;
 
-        // Sending the news message to the main channel
+        // 6. Save the FULL message to KV for the command response
+        await writeKV(env, LAST_FULL_MESSAGE_KEY, message);
+
+        // 7. Sending the news message to the main channel
         await sendRawTelegramMessage(CHAT_ID, message, news.imgUrl);
     } catch (error) {
         console.error("An error occurred during FOREX task:", error);
@@ -192,7 +218,7 @@ export default {
         
         // Status check
         if (url.pathname === '/status') {
-            const lastForex = await readLastHeadlineKV(env, LAST_HEADLINE_KEY);
+            const lastForex = await readKV(env, LAST_HEADLINE_KEY);
             return new Response(`Forex Bot Worker is active.\nLast Forex Headline: ${lastForex || 'N/A'}`, { status: 200 });
         }
 
@@ -203,9 +229,7 @@ export default {
                 if (update.message && update.message.chat) {
                     const chatId = update.message.chat.id;
                     
-                    // --- Get message text and normalize it (Trim & Lowercase) ---
                     const messageText = update.message.text || "";
-                    // Using trim() and toLowerCase() handles case sensitivity issues
                     const command = messageText.trim().toLowerCase(); 
                     
                     let replyText = "";
@@ -228,13 +252,15 @@ export default {
 
                         case '/fundamental':
                         case '/economic':
-                            // For now, these commands return the last saved headline.
-                            const lastHeadline = await readLastHeadlineKV(env, LAST_HEADLINE_KEY);
-                            const lastHeadline_si = lastHeadline ? await translateText(lastHeadline) : "No news available yet.";
+                            // 🚨 Reading the full formatted message saved in KV 
+                            const lastFullMessage = await readKV(env, LAST_FULL_MESSAGE_KEY);
                             
-                            replyText = `<b>📁 Last Fundamental News Update</b>\n\n` +
-                                        `<b>🇬🇧 English:</b> ${lastHeadline || 'N/A'}\n` +
-                                        `<b>🇱🇰 සිංහල:</b> ${lastHeadline_si}`;
+                            if (lastFullMessage) {
+                                // Send the complete, pre-formatted message
+                                replyText = `<b>📁 Last Fundamental News Update (Command)</b>\n\n${lastFullMessage}`;
+                            } else {
+                                replyText = "Sorry, no recent fundamental news has been processed yet. Please wait for the next update or try the /trigger endpoint.";
+                            }
                             break;
 
                         default:
