@@ -114,7 +114,7 @@ async function getLatestForexNews() {
     
     // Fetch detail page
     const newsResp = await fetch(newsUrl, { headers: HEADERS });
-    if (!newsResp.ok) throw new Error(`HTTP error! status: ${resp.status} on detail page`);
+    if (!newsResp.ok) throw new Error(`HTTP error! status: ${newsResp.status} on detail page`);
 
     const newsHtml = await newsResp.text();
     const $detail = load(newsHtml);
@@ -133,16 +133,19 @@ async function fetchForexNews(env) {
         // 2. Read the last saved headline from KV
         const lastHeadline = await readLastHeadlineKV(env, LAST_HEADLINE_KEY);
 
-        // 3. 🚨 CRITICAL CHECK: If headlines match, STOP and do nothing.
-        if (news.headline === lastHeadline) {
-            console.info(`Forex: No new headline. Last: ${news.headline}`);
+        // 3. CRITICAL CHECK: Trim the KV value before comparison
+        const currentHeadline = news.headline;
+        const cleanLastHeadline = lastHeadline ? lastHeadline.trim() : null; // Ensure lastHeadline is also clean
+
+        if (currentHeadline === cleanLastHeadline) {
+            console.info(`Forex: No new headline. Last: ${currentHeadline}`);
             return; // EXIT - Prevents duplication
         }
         
         // --- ONLY PROCEED IF THE HEADLINE IS NEW ---
 
-        // 4. Save the NEW headline to KV
-        await writeLastHeadlineKV(env, LAST_HEADLINE_KEY, news.headline);
+        // 4. Save the NEW headline (which is already trimmed) to KV
+        await writeLastHeadlineKV(env, LAST_HEADLINE_KEY, currentHeadline);
 
         // 5. Generate and send the message
         const description_si = await translateText(news.description);
@@ -153,7 +156,7 @@ async function fetchForexNews(env) {
                         `<b>🌎 Headline (English):</b> ${news.headline}\n\n` +
                         `<b>🔥 සිංහල:</b> ${description_si}\n\n` +
                         `<a href="${news.newsUrl}">Read Full Article</a>\n\n` +
-                        `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
+                        `🚀 <i>Dev: Mr Chamo 🇱🇰</i>`;
 
         // Sending the news message to the main channel
         await sendRawTelegramMessage(CHAT_ID, message, news.imgUrl);
@@ -187,7 +190,6 @@ export default {
         // Manual trigger
         if (url.pathname === '/trigger') {
             await handleScheduledTasks(env);
-            // This response confirms the action without sending a success message to the Telegram Channel
             return new Response("Scheduled task (Forex Only) manually triggered. Check your Telegram channel for the news (if new).", { status: 200 });
         }
         
@@ -197,14 +199,28 @@ export default {
             return new Response(`Forex Bot Worker is active.\nLast Forex Headline: ${lastForex || 'N/A'}`, { status: 200 });
         }
 
-        // Webhook Handling
+        // Webhook Handling (for Telegram messages)
         if (request.method === 'POST') {
              try {
                 const update = await request.json();
                 if (update.message && update.message.chat) {
                     const chatId = update.message.chat.id;
                     const text = update.message.text || "";
-                    const replyText = `ඔයා type කරපු දේ: <b>${text}</b>`;
+                    
+                    let replyText = "";
+
+                    // 🚨 NEW: Handle /start command
+                    if (text.toLowerCase() === '/start') {
+                        replyText = 
+                            `<b>👋 ආයුබෝවන්!</b>\n\n` +
+                            `මම තමයි <b>🇱🇰 Mr Chamo's Forex News Bot</b>.\n\n` +
+                            `මට පුළුවන් <b>Forex Factory</b> වෙතින් නවතම Fundamental News සොයාගෙන, එය <b>සිංහලට පරිවර්තනය</b> කරලා ඔබට ලබා දෙන්න.\n\n` +
+                            `ඔබට ස්වයංක්‍රීයව පුවත් ලැබෙනු ඇත.`;
+                    } else {
+                        // Default reply for any other message
+                        replyText = `ඔබට ස්වයංක්‍රීයව පුවත් ලැබෙනු ඇත. වැඩි විස්තර සඳහා <b>/start</b> යොදන්න.`;
+                    }
+
                     await sendRawTelegramMessage(chatId, replyText);
                 }
                 return new Response('OK', { status: 200 });
