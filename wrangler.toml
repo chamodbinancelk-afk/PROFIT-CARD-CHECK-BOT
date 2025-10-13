@@ -11,4 +11,4 @@ compatibility_flags = ["nodejs_compat"]
 
 # Cron Trigger (Scheduled Event)
 [triggers]
-crons = ["*/1 * * * *"] 
+crons = ["*/3 * * * *"] 
