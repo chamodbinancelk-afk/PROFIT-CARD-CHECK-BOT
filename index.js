@@ -185,9 +185,12 @@ async function getLatestEconomicEvents() {
         const row = $(rows[i]);
         const eventId = row.attr("data-event-id");
 
-        const actual = row.find(".calendar__actual").text().trim();
+        // --- IMPROVED ACTUAL VALUE SELECTION ---
+        // Look for any cell that has the 'actual' class, and ensure it is not empty or just a dash.
+        const actualElement = row.find(".calendar__actual");
+        const actual = actualElement.text().trim();
         
-        if (actual && actual !== "-" && eventId) {
+        if (actual && actual !== "-" && eventId && actualElement.css('color') !== 'rgb(175, 175, 175)') {
             
              const currency_td = row.find(".calendar__currency");
              const title_td = row.find(".calendar__event");
@@ -282,8 +285,9 @@ async function fetchEconomicNews(env) {
                 sentCount++;
             } else {
                  // If sending failed, revert the KV entry for this event so it retries next time
-                 await env.NEWS_STATE.delete(eventKVKey);
-                 console.warn(`[Economic Revert] Failed to send new event. Reverting KV for ID: ${event.id}`);
+                 // (Optional: Reverting is safer but can lead to duplicates if Telegram API failure is temporary)
+                 // await env.NEWS_STATE.delete(eventKVKey); 
+                 console.warn(`[Economic Revert] Failed to send new event. Reverting KV for ID: ${event.id} is skipped.`);
             }
         }
         
@@ -483,6 +487,7 @@ export default {
                             if (economicMessage) {
                                 await sendRawTelegramMessage(chatId, economicMessage); 
                             } else {
+                                // This is what is currently running, as the KV is empty.
                                 replyText = "Sorry, no recent economic event has been processed yet. Please wait for the next update.";
                                 await sendRawTelegramMessage(chatId, replyText);
                             }
