@@ -236,28 +236,165 @@ async function fetchEconomicNews(env) {
         if (event.id === lastEventId) {
             console.info(`[Economic Check] No new realized event. Last ID: ${event.id}`);
             return;
+// --- ECONOMIC CALENDAR LOGIC ---
+
+/**
+ * Scrapes the Forex Factory calendar for ALL released economic events
+ * that occurred at the latest realized time.
+ */
+async function getLatestEconomicEvents() {
+    const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
+    if (!resp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${resp.status} on calendar page.`);
+
+    const html = await resp.text();
+    const $ = load(html);
+    const rows = $('.calendar__row');
+
+    let latestTime = null;
+    let latestEvents = [];
+    
+    // 1. Find the LATEST TIME when an Actual value was released
+    for (let i = rows.length - 1; i >= 0; i--) {
+        const row = $(rows[i]);
+        const actual = row.find(".calendar__actual").text().trim();
+        const time_td = row.find(".calendar__time");
+        
+        // Find the time cell. FF Calendar time might be empty for consecutive events.
+        const timeText = time_td.text().trim();
+        
+        if (actual && actual !== "-") {
+            // Found the latest realized event. Get its time.
+            if (timeText) {
+                latestTime = timeText;
+            }
+            // If the time cell is empty, we keep looking for the time of the previous event (which is likely the time for this one too)
+            if (latestTime) break; 
+        }
+    }
+    
+    if (!latestTime) {
+        console.info("[Economic Scraping] No realized events with a visible time found yet.");
+        return [];
+    }
+    
+    // 2. Collect ALL events that belong to the LATEST TIME
+    // The calendar groups rows by time. We need to iterate again to find all events at the 'latestTime' boundary.
+    let isCollecting = false;
+    
+    for (let i = rows.length - 1; i >= 0; i--) {
+        const row = $(rows[i]);
+        const eventId = row.attr("data-event-id");
+        const timeText = row.find(".calendar__time").text().trim();
+        const actual = row.find(".calendar__actual").text().trim();
+        
+        // Start collecting when we hit the latestTime boundary
+        if (timeText === latestTime) {
+            isCollecting = true;
         }
 
-        await writeKV(env, LAST_ECONOMIC_EVENT_ID_KEY, event.id);
-
-        const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
-        const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
-
-        const message = 
-            `<b>🚨 Economic Calendar Release 🔔</b>\n\n` +
-            `⏰ <b>Date & Time:</b> ${date_time}\n\n` +
-            `🌍 <b>Currency:</b> ${event.currency}\n` +
-            `📌 <b>Headline:</b> ${event.title}\n\n` +
-            `📈 <b>Actual:</b> ${event.actual}\n` +
-            `📉 <b>Previous:</b> ${event.previous}\n\n` +
-            `🔍 <b>Details:</b> ${comparison}\n\n` +
-            `<b>📈 Market Reaction Forecast:</b> ${reaction}\n\n` +
-            `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
-
-        await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, message);
-        await sendRawTelegramMessage(CHAT_ID, message);
-        console.log(`[Economic Success] Sent new event ID: ${event.id}`);
+        // Stop collecting when we hit an earlier time
+        if (isCollecting && timeText && timeText !== latestTime) {
+            // This is an older time, so we stop the collection
+            break; 
+        }
         
+        // Process and add only events that are part of the current collection batch AND have an Actual value
+        if (isCollecting && actual && actual !== "-" && eventId) {
+             const currency_td = row.find(".calendar__currency");
+             const title_td = row.find(".calendar__event");
+             const previous_td = row.find(".calendar__previous");
+             const impact_td = row.find('.calendar__impact');
+             
+             // Extract Impact Text
+             let impactText = "Unknown";
+             const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first(); 
+             // ... (Impact Extraction Logic - unchanged, but included for completeness) ...
+             if (impactElement.length > 0) {
+                impactText = impactElement.attr('title') || "Unknown"; 
+                if (impactText === "Unknown") {
+                    const classList = impactElement.attr('class') || "";
+                    if (classList.includes('impact-icon--high') || classList.includes('high')) {
+                        impactText = "High Impact Expected";
+                    } else if (classList.includes('impact-icon--medium') || classList.includes('medium')) {
+                        impactText = "Medium Impact Expected";
+                    } else if (classList.includes('impact-icon--low') || classList.includes('low')) {
+                        impactText = "Low Impact Expected";
+                    } else if (classList.includes('impact-icon--holiday') || classList.includes('holiday')) {
+                        impactText = "Non-Economic/Holiday";
+                    }
+                }
+             }
+
+             latestEvents.push({
+                 id: eventId,
+                 currency: currency_td.text().trim(),
+                 title: title_td.text().trim(),
+                 actual: actual,
+                 previous: previous_td.text().trim() || "0",
+                 impact: impactText 
+             });
+        }
+    }
+    
+    // Reverse the array so the oldest event of the batch is processed first (optional)
+    return latestEvents.reverse(); 
+}
+
+/**
+ * Handles fetching, processing, and sending ALL economic calendar events 
+ * that released at the latest time.
+ */
+async function fetchEconomicNews(env) {
+    try {
+        const events = await getLatestEconomicEvents();
+        if (events.length === 0) return;
+
+        let sentCount = 0;
+        let finalMessage = "";
+
+        // 3. Process each event found
+        for (const event of events) {
+            // Create a unique KV key for each specific event using its ID
+            const eventKVKey = LAST_ECONOMIC_EVENT_ID_KEY + "_" + event.id; 
+            const lastEventId = await readKV(env, eventKVKey);
+            
+            if (event.id === lastEventId) {
+                console.info(`[Economic Check] Event already processed. ID: ${event.id}`);
+                continue; // Skip this event
+            }
+            
+            // --- ONLY PROCEED IF THE EVENT IS NEWLY REALIZED ---
+            await writeKV(env, eventKVKey, event.id);
+
+            const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
+            const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
+
+            // Construct the message for this single event
+            const message = 
+                `<b>🚨 Economic Calendar Release 🔔</b>\n\n` +
+                `⏰ <b>Date & Time:</b> ${date_time}\n\n` +
+                `🌍 <b>Currency:</b> ${event.currency}\n` +
+                `📌 <b>Headline:</b> ${event.title}\n\n` +
+                `📈 <b>Actual:</b> ${event.actual}\n` +
+                `📉 <b>Previous:</b> ${event.previous}\n\n` +
+                `🔍 <b>Details:</b> ${comparison}\n\n` +
+                `<b>📈 Market Reaction Forecast:</b> ${reaction}\n\n` +
+                `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
+
+            // Send the individual message immediately
+            await sendRawTelegramMessage(CHAT_ID, message);
+            
+            // Build a cumulative message for the /economic command (using only the last event for simplicity)
+            finalMessage = message; 
+            sentCount++;
+        }
+        
+        if (sentCount > 0) {
+            // Save the message of the last processed event to the main KV key for the /economic command response
+            await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, finalMessage); 
+            console.log(`[Economic Success] Sent ${sentCount} new events.`);
+        }
+
     } catch (error) {
         console.error("[ECONOMIC ERROR] An error occurred during ECONOMIC task:", error);
     }
