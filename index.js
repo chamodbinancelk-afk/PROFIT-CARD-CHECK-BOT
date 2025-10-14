@@ -371,7 +371,7 @@ Sinhala Summary: [Sinhala translation of the analysis (very brief, max 2 sentenc
             // Parsing the text response
             const lines = textResponse.split('\n');
             let sentiment = 'Neutral';
-            let summarySi = 'AI විශ්ලේෂණයක් සැපයීමට නොහැකි විය.';
+            let summarySi = ' විශ්ලේෂණයක් සැපයීමට නොහැකි විය.';
 
             lines.forEach(line => {
                 if (line.startsWith('Sentiment:')) {
@@ -405,29 +405,6 @@ Sinhala Summary: [Sinhala translation of the analysis (very brief, max 2 sentenc
 // =================================================================
 // --- ECONOMIC CALENDAR LOGIC (ආර්ථික දින දර්ශන තර්කය) ---
 // =================================================================
-
-function analyzeComparison(actual, previous) {
-    try {
-        const cleanAndParse = (value) => parseFloat(value.replace(/%|,|K|M|B/g, '').trim() || '0');
-        const a = cleanAndParse(actual);
-        const p = cleanAndParse(previous);
-
-        if (isNaN(a) || isNaN(p) || actual.trim() === '-' || actual.trim() === '' || actual.toLowerCase().includes('holiday')) {
-            return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
-        }
-
-        if (a > p) {
-            return { comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`, reaction: "📈 Forex සහ Crypto වෙළඳපොළ ඉහළට යා හැකියි (ධනාත්මක බලපෑම්)" };
-        } else if (a < p) {
-            return { comparison: `පෙර දත්තවලට වඩා පහළයි (${actual})`, reaction: "📉 Forex සහ Crypto වෙළඳපොළ පහළට යා හැකියි (ඍණාත්මක බලපෑම්)" };
-        } else {
-            return { comparison: `පෙර දත්තවලට සමානයි (${actual})`, reaction: "⚖ Forex සහ Crypto වෙළඳපොළ ස්ථාවරයෙහි පවතී" };
-        }
-    } catch (error) {
-        console.error("Error analyzing economic comparison:", error);
-        return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
-    }
-}
 
 async function getLatestEconomicEvents() {
     const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
@@ -502,7 +479,6 @@ async function fetchEconomicNews(env) {
             
             await writeKV(env, eventKVKey, event.id);
 
-            const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
             const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
 
             // --- NEW: Get AI Economic Analysis ---
@@ -510,19 +486,19 @@ async function fetchEconomicNews(env) {
                 event.currency,
                 event.title,
                 event.actual,
-                event.previous
+                event.previous,
+                event.impact
             );
             // --- END NEW ---
 
             const message = 
                 `<b>🚨 Economic Calendar Release 🔔</b>\n\n` +
-                `⏰ <b>Date & Time:</b> ${date_time}\n` +
-                `🌍 <b>Currency:</b> ${event.currency}\n` +
+                `⏰ <b>Date & Time:</b> ${date_time}\n\n` +
+                `🌍 <b>Currency:</b> ${event.currency}\n\n` +
                 `📌 <b>Headline:</b> ${event.title}\n\n` +
                 `📈 <b>Actual:</b> ${event.actual}\n` +
                 `📉 <b>Previous:</b> ${event.previous}\n\n` +
-                `🔍 <b>Details:</b> ${comparison}\n\n` +
-                `<b>📈 Local Reaction:</b> ${reaction}\n\n` +
+                `📈 <b>impact:</b> ${event.impact}\n\n` +
                 
                 // AI Summary එක මෙතනට ඇතුළු වේ
                 `${aiEconomicSummary}\n\n` + 
