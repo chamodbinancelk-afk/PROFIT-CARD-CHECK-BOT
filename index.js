@@ -14,7 +14,7 @@ const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36',
     'Accept-Language': 'en-US,en;q=0.9',
     'Referer': 'https://www.forexfactory.com/',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*q=0.8'
 };
 
 // URLs
@@ -28,8 +28,8 @@ const LAST_FULL_MESSAGE_KEY = 'last_full_news_message';
 const LAST_IMAGE_URL_KEY = 'last_image_url'; 
 
 // Economic Calendar Keys
+// Note: We use this prefix for per-event unique IDs (e.g., last_economic_event_id_12345)
 const LAST_ECONOMIC_EVENT_ID_KEY = 'last_economic_event_id'; 
-// This key will now ONLY store the LATEST message that was ACTUALLY SENT to the channel
 const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message'; 
 
 
@@ -93,13 +93,14 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
                 break; 
             }
             console.log(`[TELEGRAM SUCCESS] Message sent successfully via ${apiMethod}.`);
-            return; 
+            return true; // Indicate success
         } catch (error) {
             console.error("[TELEGRAM ERROR] Error sending message:", error);
             const delay = Math.pow(2, attempt) * 1000;
             await new Promise(resolve => setTimeout(resolve, delay));
         }
     }
+    return false; // Indicate failure
 }
 
 /**
@@ -241,8 +242,7 @@ async function fetchEconomicNews(env) {
         }
 
         let sentCount = 0;
-        // finalMessage will ONLY be updated with a message that was ACTUALLY SENT
-        let finalMessage = await readKV(env, LAST_ECONOMIC_MESSAGE_KEY) || "";
+        let lastSentMessage = ""; 
 
         // Process each realized event
         for (const event of events) {
@@ -274,16 +274,22 @@ async function fetchEconomicNews(env) {
                 `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
 
             // Send the individual message immediately
-            await sendRawTelegramMessage(CHAT_ID, message);
+            const sendSuccess = await sendRawTelegramMessage(CHAT_ID, message);
             
-            // Update the message for the /economic command only if it was successfully sent
-            finalMessage = message; 
-            sentCount++;
+            if (sendSuccess) {
+                // Only if the message was successfully sent to the channel, update the command response KV
+                lastSentMessage = message; 
+                sentCount++;
+            } else {
+                 // If sending failed, revert the KV entry for this event so it retries next time
+                 await env.NEWS_STATE.delete(eventKVKey);
+                 console.warn(`[Economic Revert] Failed to send new event. Reverting KV for ID: ${event.id}`);
+            }
         }
         
         if (sentCount > 0) {
-            // Only save the message if NEW news was sent (finalMessage holds the newest sent message)
-            await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, finalMessage); 
+            // Save the LATEST message that was SUCCESSFULLY SENT to the channel
+            await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, lastSentMessage); 
             console.log(`[Economic Success] Found and sent ${sentCount} new events.`);
         } else {
              console.log(`[Economic Success] No new events found to send.`);
@@ -420,14 +426,15 @@ export default {
         // Status check
         if (url.pathname === '/status') {
             const lastForex = await readKV(env, LAST_HEADLINE_KEY);
-            const lastEconomic = await readKV(env, LAST_ECONOMIC_EVENT_ID_KEY); 
+            const lastEconomic = await readKV(env, LAST_ECONOMIC_MESSAGE_KEY); 
             
-            return new Response(
+            // Show the actual economic message for better debugging
+            const statusMessage = 
                 `Forex Bot Worker is active.\n` + 
                 `Last Fundamental Headline: ${lastForex || 'N/A'}\n` +
-                `Last Economic Event ID (Last Sent): ${lastEconomic || 'N/A'}`, 
-                { status: 200 }
-            );
+                `Last Economic Message (Preview): ${lastEconomic ? lastEconomic.substring(0, 100) + '...' : 'N/A'}`;
+                
+            return new Response(statusMessage, { status: 200 });
         }
 
         // Webhook Handling (for Telegram commands)
