@@ -67,7 +67,7 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
                 if (apiMethod === 'sendPhoto') {
                     currentImgUrl = null; 
                     apiMethod = 'sendMessage';
-                    attempt = -1; 
+                    attempt = -1; // Retry as sendMessage
                     continue; 
                 }
                 break; 
@@ -125,7 +125,7 @@ async function translateText(text) {
 // =================================================================
 
 function analyzeComparison(actual, previous) {
-    // ... (analyzeComparison logic නොවෙනස්ව තබන්න)
+    // ... (analyzeComparison logic)
     try {
         const cleanAndParse = (value) => parseFloat(value.replace(/%|,|K|M|B/g, '').trim() || '0');
         const a = cleanAndParse(actual);
@@ -258,7 +258,6 @@ async function fetchEconomicNews(env) {
 // --- CORE FOREX NEWS LOGIC (Fundamental) ---
 // =================================================================
 
-// ... (getLatestForexNews සහ fetchForexNews නොවෙනස්ව තබන්න - ඒවා නිවැරදිව ක්‍රියාත්මක වේ)
 async function getLatestForexNews() {
     const resp = await fetch(FF_NEWS_URL, { headers: HEADERS });
     if (!resp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${resp.status} on news page.`);
@@ -336,6 +335,7 @@ async function fetchForexNews(env) {
 // =================================================================
 
 async function handleScheduledTasks(env) {
+    // Original Functions
     await fetchEconomicNews(env); 
     await fetchForexNews(env);
 }
@@ -344,8 +344,12 @@ async function fetchHandler(request, env, ctx) {
     const url = new URL(request.url);
 
     if (url.pathname === '/trigger') {
+        // --- MANUAL TRIGGER TEST: SAVE TEST MESSAGE TO KV ---
+        const testMessage = `<b>✅ Economic Message Test Successful!</b>\n\nThis message confirms that:\n1. KV read/write is working.\n2. Telegram command logic is functional.\n\nNow try the <code>/economic</code> command in Telegram!`;
+        await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, testMessage);
+        
         ctx.waitUntil(handleScheduledTasks(env));
-        return new Response("Scheduled task (All News) manually triggered. Check your Telegram channel and Worker Logs.", { status: 200 });
+        return new Response("Scheduled task (All News) manually triggered and KV Test Message saved. Check your Telegram channel and Worker Logs.", { status: 200 });
     }
     
     if (url.pathname === '/status') {
@@ -355,13 +359,16 @@ async function fetchHandler(request, env, ctx) {
         const statusMessage = 
             `Forex Bot Worker is active.\n` + 
             `Last Fundamental Headline: ${lastForex || 'N/A'}\n` +
-            `Last Economic Message (Preview): ${lastEconomic ? lastEconomic.substring(0, 100) + '...' : 'N/A'}`;
+            `Last Economic Message (Preview): ${lastEconomic ? lastEconomic.substring(0, 100).replace(/(\r\n|\n|\r)/gm, " ") + '...' : 'N/A'}`;
             
         return new Response(statusMessage, { status: 200 });
     }
 
     if (request.method === 'POST') {
         try {
+            // Log that a request was received (CRITICAL DEBUG)
+            console.log("--- WEBHOOK REQUEST RECEIVED (POST) ---");
+
             const update = await request.json();
             if (update.message && update.message.chat) {
                 const chatId = update.message.chat.id;
@@ -399,6 +406,7 @@ async function fetchHandler(request, env, ctx) {
 
                     case '/economic':
                         const economicMessage = await readKV(env, LAST_ECONOMIC_MESSAGE_KEY);
+                        console.log(`[Command /economic] KV Message Status: ${economicMessage ? 'Found' : 'Not Found'}`); // Log KV status
                         if (economicMessage) {
                             await sendRawTelegramMessage(chatId, economicMessage); 
                         } else {
@@ -415,6 +423,8 @@ async function fetchHandler(request, env, ctx) {
             }
             return new Response('OK', { status: 200 });
         } catch (e) {
+            // Non-critical errors handled silently to prevent Telegram Webhook timeouts
+            console.error("Error handling Telegram POST update:", e);
             return new Response('OK', { status: 200 }); 
         }
     }
