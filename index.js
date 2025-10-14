@@ -2,9 +2,7 @@ const { load } = require('cheerio');
 const moment = require('moment-timezone');
 
 // 🚨🚨 CRITICAL: ඔබගේ සැබෑ BOT TOKEN එක මෙහි ඇතුල් කරන්න! 🚨🚨
-// ⚠️ මේ Token එක කලින් 401 Error එක දුන් Token එක විය හැක.
-// ⚠️ කරුණාකර BotFather වෙතින් ලබාගත් "නව" සහ "නිවැරදි" Token එක මෙහි ඇතුල් කරන්න.
-const TELEGRAM_TOKEN = '8299929776:AAEFqh0J0kVqzioFF2ft5okOtQqO_8evviY'; // <--- ඔබගේ නව Token එක මෙතනට දමන්න!
+const TELEGRAM_TOKEN = '8299929776:AAEFqh0J0kVqzioFF2ft5okOtQqO_8evviY'; 
 
 // 🚨🚨 CRITICAL: පණිවිඩ ලැබිය යුතු CHAT ID එක මෙහි ඇතුල් කරන්න! 🚨🚨
 const CHAT_ID = '-1003177936060'; 
@@ -29,7 +27,7 @@ const LAST_HEADLINE_KEY = 'last_forex_headline';
 const LAST_FULL_MESSAGE_KEY = 'last_full_news_message'; 
 const LAST_IMAGE_URL_KEY = 'last_image_url'; 
 
-// 🚨 NEW: Economic Calendar Keys
+// Economic Calendar Keys
 const LAST_ECONOMIC_EVENT_ID_KEY = 'last_economic_event_id'; 
 const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message'; 
 
@@ -40,6 +38,7 @@ const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message';
 
 /**
  * Utility function to send raw messages via Telegram API.
+ * Uses sendPhoto if imgUrl is provided, otherwise uses sendMessage.
  */
 async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
     if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN') {
@@ -95,7 +94,7 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
  */
 async function readKV(env, key) {
     try {
-        // 🚨 CRITICAL: NEWS_STATE binding එක Cloudflare Dashboard එකේ තිබිය යුතුයි.
+        // NEWS_STATE binding එක Cloudflare Dashboard එකේ තිබිය යුතුයි.
         const value = await env.NEWS_STATE.get(key); 
         return value;
     } catch (e) {
@@ -131,7 +130,7 @@ async function translateText(text) {
 }
 
 // =================================================================
-// --- 🚨 NEW: ECONOMIC CALENDAR LOGIC ---
+// --- ECONOMIC CALENDAR LOGIC ---
 // =================================================================
 
 /**
@@ -151,8 +150,6 @@ function analyzeComparison(actual, previous) {
              };
         }
 
-        // Note: Economic events sometimes have the opposite reaction to Forex Factory's assumption
-        // but we will stick to the standard high/low movement logic for simplicity.
         if (a > p) {
             return {
                 comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`,
@@ -263,33 +260,7 @@ async function fetchEconomicNews(env) {
         const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
         const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
 
-        // Impact level එක පදනම් කරගෙන Text සහ Emoji සකස් කිරීම
-        let impactLevelText = "⚪ Unknown Impact";
-        let impactEmoji = "⚪";
-        switch (event.impact) {
-            case "High Impact Expected":
-                impactLevelText = "🔴 High Impact News";
-                impactEmoji = "🔴";
-                break;
-            case "Medium Impact Expected":
-                impactLevelText = "🟠 Medium Impact News";
-                impactEmoji = "🟠";
-                break;
-            case "Low Impact Expected":
-                impactLevelText = "🟢 Low Impact News";
-                impactEmoji = "🟢";
-                break;
-            case "Non-Economic/Holiday": 
-                impactLevelText = "⚪ Non-Economic / Holiday";
-                impactEmoji = "⚪";
-                break;
-            case "Unknown": 
-            default:
-                impactLevelText = "⚪ Unknown Impact (Please Check Calendar)";
-                impactEmoji = "⚪";
-        }
-
-        // Final Sinhala message (HTML format) - Impact Level එක ඇතුළත් වේ
+        // Final Sinhala message (HTML format)
         const message = 
             `<b>🚨 Economic Calendar Release 🔔</b>\n\n` +
             `⏰ <b>Date & Time:</b> ${date_time}\n\n` +
@@ -324,7 +295,8 @@ async function getLatestForexNews() {
 
     const html = await resp.text();
     const $ = load(html);
-    const newsLinkTag = $('a[href^="/news/"]').not('a[href$="/hit"]').first();
+    // Select the first news link that is not a 'hit' (usually the main headline)
+    const newsLinkTag = $('a[href^="/news/"]').not('a[href$="/hit"]').first(); 
 
     if (newsLinkTag.length === 0) return null;
 
@@ -337,9 +309,25 @@ async function getLatestForexNews() {
 
     const newsHtml = await newsResp.text();
     const $detail = load(newsHtml);
+    
     // Find the image URL (Forex Factory uses image links in news)
-    const imgUrl = $detail('img.attach').attr('src'); 
+    let imgUrl = $detail('img.attach').attr('src'); 
     const description = $detail('p.news__copy').text().trim() || "No description found.";
+
+    // 🚨 CRITICAL FIX: Ensure the image URL is absolute for Telegram
+    if (imgUrl) {
+        if (imgUrl.startsWith('/')) {
+            // Prepend the domain name if it's a relative URL
+            imgUrl = "https://www.forexfactory.com" + imgUrl;
+        }
+        // If the URL is still invalid (e.g., just 'null' or a broken link), set it to null 
+        // to force sendRawTelegramMessage to use sendMessage (text-only).
+        if (!imgUrl.startsWith('http')) {
+             imgUrl = null;
+        }
+    } else {
+        imgUrl = null;
+    }
 
     return { headline, newsUrl, imgUrl, description };
 }
@@ -372,12 +360,15 @@ async function fetchForexNews(env) {
 
         // Save the FULL message and image URL to KV for the command response
         await writeKV(env, LAST_FULL_MESSAGE_KEY, message);
+        // Save the Absolute URL (or empty string if null)
         await writeKV(env, LAST_IMAGE_URL_KEY, news.imgUrl || ''); 
-
+        
         // Sending the news message to the main channel
+        // If news.imgUrl is a valid Absolute URL, it sends a photo; otherwise, it sends text only.
         await sendRawTelegramMessage(CHAT_ID, message, news.imgUrl);
+        console.log(`Fundamental News sent: ${news.headline}`);
     } catch (error) {
-        console.error("An error occurred during FUNDAMENTAL task:", error);
+        console.error("An error occurred during FUNDAMENTAL task (SEND FAILED):", error);
     }
 }
 
@@ -461,7 +452,6 @@ export default {
                         case '/economic':
                             // Command එක අනුව KV key තෝරා ගැනීම
                             const messageKey = (command === '/fundamental') ? LAST_FULL_MESSAGE_KEY : LAST_ECONOMIC_MESSAGE_KEY;
-                            const title = (command === '/fundamental') ? 'Last Fundamental News Update' : 'Last Economic News Update';
                             
                             // Image URL ඇත්තේ Fundamental News වල පමණයි
                             const lastImageUrl = (command === '/fundamental') ? await readKV(env, LAST_IMAGE_URL_KEY) : null; 
@@ -470,12 +460,7 @@ export default {
                             const lastFullMessage = await readKV(env, messageKey);
                             
                             if (lastFullMessage) {
-                                // We don't wrap the message, as the KV already contains the full formatted text.
-                                // If it's Economic, the message includes the title in the KV itself.
-                                // If it's Fundamental, the KV contains the message, and we optionally send the image.
-                                
-                                // Since both types of messages (Fundamental and Economic) are now saved with their own full formatting,
-                                // we can send the KV content directly. We only need to check if the KV value exists.
+                                // Send the KV content directly. Use the image URL if it's a fundamental command.
                                 await sendRawTelegramMessage(chatId, lastFullMessage, lastImageUrl); 
                             } else {
                                 replyText = (command === '/fundamental') 
