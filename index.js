@@ -2,8 +2,19 @@
 import { load } from 'cheerio';
 import moment from 'moment-timezone';
 
-// --- CONFIGURATION (KV සහ Environment Variables හරහා සපයන දත්ත) ---
-// ⚠️ සියලුම වැදගත් Keys සහ Tokens දැන් Cloudflare Worker Settings හි Environment Variables යටතේ සපයනු ලැබේ.
+// =================================================================
+// --- 🔴 HARDCODED CONFIGURATION (KEYS INSERTED DIRECTLY) 🔴 ---
+//    (Replace the placeholder values below with your actual data)
+// =================================================================
+
+const HARDCODED_CONFIG = {
+    // ⚠️ මේවා ඔබේ සත්‍ය දත්ත මගින් ප්‍රතිස්ථාපනය කරන්න
+    TELEGRAM_TOKEN: '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A',       
+    CHAT_ID: '-1003111341307',                 
+    GEMINI_API_KEY: 'AIzaSyAb4dX3HiUb22JnN21_zXzKchngxeueICo',           
+    
+    // NOTE: KV Binding එකේ නම (NEWS_STATE) දැන් env වස්තුව හරහා කෙලින්ම කියවනු ලැබේ.
+};
 
 // --- NEW CONSTANTS FOR MEMBERSHIP CHECK AND BUTTON (MUST BE SET!) ---
 const CHANNEL_USERNAME = 'C_F_News'; // 👈 මෙය ඔබගේ Public Channel Username එක ලෙස සකසන්න!
@@ -39,13 +50,12 @@ const FALLBACK_DESCRIPTION_EN = "No description found.";
 // =================================================================
 
 /**
- * Sends a message to Telegram, optionally including an inline keyboard and as a reply.
- * Retrieves TELEGRAM_TOKEN from the environment (env).
+ * Sends a message to Telegram, using the hardcoded TELEGRAM_TOKEN.
  */
-async function sendRawTelegramMessage(env, chatId, message, imgUrl = null, replyMarkup = null, replyToId = null) {
-    const TELEGRAM_TOKEN = env.TELEGRAM_TOKEN;
-    if (!TELEGRAM_TOKEN) {
-        console.error("TELEGRAM_TOKEN is missing in ENV.");
+async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarkup = null, replyToId = null) {
+    const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
+    if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN_HERE') {
+        console.error("TELEGRAM_TOKEN is missing or placeholder.");
         return false;
     }
     const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
@@ -117,11 +127,11 @@ async function sendRawTelegramMessage(env, chatId, message, imgUrl = null, reply
 
 
 /**
- * Reads data from the KV Namespace, which must be bound as NEWS_STATE.
+ * Reads data from the KV Namespace, assuming it is bound as env.NEWS_STATE.
  */
 async function readKV(env, key) {
     try {
-        // Ensure NEWS_STATE binding exists
+        // KV Binding එකේ නම NEWS_STATE විය යුතුයි
         if (!env.NEWS_STATE) {
             console.error("KV Binding 'NEWS_STATE' is missing in ENV.");
             return null;
@@ -138,11 +148,11 @@ async function readKV(env, key) {
 }
 
 /**
- * Writes data to the KV Namespace, which must be bound as NEWS_STATE.
+ * Writes data to the KV Namespace, assuming it is bound as env.NEWS_STATE.
  */
 async function writeKV(env, key, value) {
     try {
-         // Ensure NEWS_STATE binding exists
+         // KV Binding එකේ නම NEWS_STATE විය යුතුයි
         if (!env.NEWS_STATE) {
             console.error("KV Binding 'NEWS_STATE' is missing in ENV. Write failed.");
             return;
@@ -174,9 +184,9 @@ async function translateText(text) {
 /**
  * Checks if a user is a member (or admin/creator) of the specified CHAT_ID channel.
  */
-async function checkChannelMembership(env, userId) {
-    const TELEGRAM_TOKEN = env.TELEGRAM_TOKEN;
-    const CHAT_ID = env.CHAT_ID;
+async function checkChannelMembership(userId) {
+    const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
+    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
     const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 
     if (!TELEGRAM_TOKEN || !CHAT_ID) return false;
@@ -208,14 +218,13 @@ async function checkChannelMembership(env, userId) {
 
 /**
  * Uses Gemini to generate a short Sinhala summary and sentiment analysis for the news.
- * Retrieves GEMINI_API_KEY from the environment (env).
  */
-async function getAISentimentSummary(env, headline, description) {
-    const GEMINI_API_KEY = env.GEMINI_API_KEY;
+async function getAISentimentSummary(headline, description) {
+    const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
     const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
     
     // Return a message if no key is set 
-    if (!GEMINI_API_KEY) {
+    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY_HERE') {
         return "⚠️ **AI විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ (API Key නැත).**";
     }
 
@@ -378,7 +387,7 @@ async function getLatestEconomicEvents() {
 }
 
 async function fetchEconomicNews(env) {
-    const CHAT_ID = env.CHAT_ID;
+    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
     try {
         const events = await getLatestEconomicEvents();
         
@@ -413,7 +422,7 @@ async function fetchEconomicNews(env) {
                 `<b>📈 Market Reaction Forecast:</b> ${reaction}\n\n` +
                 `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
 
-            const sendSuccess = await sendRawTelegramMessage(env, CHAT_ID, message);
+            const sendSuccess = await sendRawTelegramMessage(CHAT_ID, message);
             
             if (sendSuccess) {
                 lastSentMessage = message; 
@@ -472,7 +481,7 @@ async function getLatestForexNews() {
 }
 
 async function fetchForexNews(env) {
-    const CHAT_ID = env.CHAT_ID;
+    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
     try {
         const news = await getLatestForexNews();
         if (!news) return;
@@ -501,7 +510,7 @@ async function fetchForexNews(env) {
         // --- STEP 2: Get AI Sentiment Summary (NEW) ---
         // Only run AI if a description is present (or a brief summary for the fallback text)
         const newsForAI = (news.description !== FALLBACK_DESCRIPTION_EN) ? news.description : news.headline;
-        const aiSummary = await getAISentimentSummary(env, news.headline, newsForAI);
+        const aiSummary = await getAISentimentSummary(news.headline, newsForAI);
         
         // --- STEP 3: Construct the final message ---
         const message = `<b>📰 Fundamental News (සිංහල)</b>\n\n` +
@@ -519,7 +528,7 @@ async function fetchForexNews(env) {
         await writeKV(env, LAST_IMAGE_URL_KEY, news.imgUrl || ''); 
 
         // Send the message, using sendPhoto if imgUrl is available
-        await sendRawTelegramMessage(env, CHAT_ID, message, news.imgUrl);
+        await sendRawTelegramMessage(CHAT_ID, message, news.imgUrl);
     } catch (error) {
         console.error("An error occurred during FUNDAMENTAL task:", error.stack);
     }
@@ -532,7 +541,7 @@ async function fetchForexNews(env) {
 
 async function handleTelegramUpdate(update, env) {
     // Read the required environment variables immediately
-    const CHAT_ID = env.CHAT_ID; 
+    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID; 
 
     if (!update.message || !update.message.text) {
         return; 
@@ -547,8 +556,7 @@ async function handleTelegramUpdate(update, env) {
 
     // --- 1. MANDATORY MEMBERSHIP CHECK ---
     if (command === '/economic' || command === '/fundamental') {
-        // NOTE: CHAT_ID is read from env at the function start
-        const isMember = await checkChannelMembership(env, userId);
+        const isMember = await checkChannelMembership(userId);
 
         if (!isMember) {
             const denialMessage = 
@@ -566,7 +574,7 @@ async function handleTelegramUpdate(update, env) {
                 ]
             };
 
-            await sendRawTelegramMessage(env, chatId, denialMessage, null, replyMarkup, messageId); 
+            await sendRawTelegramMessage(chatId, denialMessage, null, replyMarkup, messageId); 
             return; 
         }
     }
@@ -585,29 +593,30 @@ async function handleTelegramUpdate(update, env) {
                 `🚀 <b>Developer :</b> @chamoddeshan\n` +
                 `🔥 <b>Mr Chamo Corporation ©</b>\n\n` +
                 `◇───────────────◇`;
-            await sendRawTelegramMessage(env, chatId, replyText, null, null, messageId); 
+            await sendRawTelegramMessage(chatId, replyText, null, null, messageId); 
             break;
 
         case '/fundamental':
         case '/economic':
             const messageKey = (command === '/fundamental') ? LAST_FULL_MESSAGE_KEY : LAST_ECONOMIC_MESSAGE_KEY;
+            // KV read still needs 'env' to access the KV store binding
             const lastImageUrl = (command === '/fundamental') ? await readKV(env, LAST_IMAGE_URL_KEY) : null; 
             
             const lastFullMessage = await readKV(env, messageKey);
             
             if (lastFullMessage) {
-                await sendRawTelegramMessage(env, chatId, lastFullMessage, lastImageUrl, null, messageId); 
+                await sendRawTelegramMessage(chatId, lastFullMessage, lastImageUrl, null, messageId); 
             } else {
                 const fallbackText = (command === '/fundamental') 
                     ? "Sorry, no recent fundamental news has been processed yet. Please wait for the next update."
                     : "Sorry, no recent economic event has been processed yet. Please wait for the next update.";
-                await sendRawTelegramMessage(env, chatId, fallbackText, null, null, messageId); 
+                await sendRawTelegramMessage(chatId, fallbackText, null, null, messageId); 
             }
             break;
 
         default:
             const defaultReplyText = `ඔබට ස්වයංක්‍රීයව පුවත් ලැබෙනු ඇත. වැඩි විස්තර සහ Commands සඳහා <b>/start</b> යොදන්න.`;
-            await sendRawTelegramMessage(env, chatId, defaultReplyText, null, null, messageId); 
+            await sendRawTelegramMessage(chatId, defaultReplyText, null, null, messageId); 
             break;
     }
 }
@@ -666,6 +675,7 @@ export default {
                 
                 const statusMessage = 
                     `Forex Bot Worker is active.\n` + 
+                    `KV Binding Check: ${env.NEWS_STATE ? 'OK (Bound)' : 'FAIL (Missing Binding)'}\n` +
                     `Last Fundamental Headline: ${lastForex || 'N/A'}\n` +
                     `Last Economic Message (Preview): ${lastEconomicPreview ? lastEconomicPreview.substring(0, 100).replace(/(\r\n|\n|\r)/gm, " ") + '...' : 'N/A'}`;
                 
