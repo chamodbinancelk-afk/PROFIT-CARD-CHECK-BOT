@@ -224,8 +224,9 @@ async function getAISentimentSummary(headline, description) {
     const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
     const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
     
-    // Return a message if no key is set 
+    // 1. Initial Key Check
     if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY_HERE') {
+        console.error("Gemini AI: API Key is missing or placeholder. Skipping analysis.");
         return "⚠️ **AI විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ (API Key නැත).**";
     }
 
@@ -266,20 +267,24 @@ async function getAISentimentSummary(headline, description) {
             if (response.status === 429) {
                 // Rate limit: exponential backoff
                 const delay = initialDelay * Math.pow(2, attempt);
+                console.warn(`Gemini API: Rate limit hit (429). Retrying in ${delay}ms...`);
                 await new Promise(resolve => setTimeout(resolve, delay));
                 continue;
             }
 
             if (!response.ok) {
                 const errorText = await response.text();
-                console.error(`Gemini API Error: ${response.status} - ${errorText}`);
-                throw new Error("Gemini API call failed.");
+                // 🔴 IMPROVED LOGGING: Log the actual error for debugging
+                console.error(`Gemini API Error (Attempt ${attempt + 1}): HTTP Status ${response.status} - Response: ${errorText}`);
+                throw new Error("Gemini API call failed with non-OK status.");
             }
 
             const result = await response.json();
             const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
             
             if (!jsonText) {
+                 // 🔴 IMPROVED LOGGING: Log if the response structure is missing content
+                 console.error("Gemini API Error: Response was empty or malformed.");
                  throw new Error("Gemini response was empty or malformed.");
             }
             
@@ -297,7 +302,8 @@ async function getAISentimentSummary(headline, description) {
                    `<b>📈 බලපෑම:</b> ${sentimentEmoji}\n` +
                    `<b>📝 සාරාංශය:</b> ${summarySi}`;
         } catch (error) {
-            console.error(`Gemini API attempt ${attempt + 1} failed:`, error);
+            // Log the general failure reason
+            console.error(`Gemini API attempt ${attempt + 1} failed:`, error.message);
             if (attempt === maxRetries - 1) {
                 // Last attempt failed
                 return "\n\n⚠️ <b>AI විශ්ලේෂණය ලබා ගැනීමට නොහැකි විය.</b>";
@@ -463,7 +469,7 @@ async function getLatestForexNews() {
     const newsUrl = "https://www.forexfactory.com" + newsLinkTag.attr('href');
     
     const newsResp = await fetch(newsUrl, { headers: HEADERS });
-    if (!newsResp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${newsResp.status} on detail page`);
+    if (!newsResp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${resp.status} on detail page`);
 
     const newsHtml = await newsResp.text();
     const $detail = load(newsHtml);
