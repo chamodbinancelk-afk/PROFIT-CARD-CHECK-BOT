@@ -2,18 +2,14 @@
 import { load } from 'cheerio';
 import moment from 'moment-timezone';
 
-// --- CONFIGURATION (අවශ්‍ය පරිදි වෙනස් කරන්න!) ---
-// 🚨 CRITICAL: ඔබගේ සැබෑ BOT TOKEN එක මෙහි ඇතුල් කරන්න! 🚨
-const TELEGRAM_TOKEN = '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A'; 
-// 🚨 CRITICAL: පණිවිඩ ලැබිය යුතු CHAT ID එක මෙහි ඇතුල් කරන්න! (සාමාන්‍යයෙන් -100 න් ආරම්භ වේ) 🚨
-const CHAT_ID = '-1003111341307'; 
+// --- CONFIGURATION (KV සහ Environment Variables හරහා සපයන දත්ත) ---
+// ⚠️ මෙම විචල්‍යයන් දැන් Cloudflare Worker Settings හි 'Environment Variables' යටතේ සපයනු ලැබේ.
+// කේතය තුළට API Key එකක් හෝ Token එකක් hardcode කිරීම අවශ්‍ය නොවේ!
 
 // --- NEW CONSTANTS FOR MEMBERSHIP CHECK AND BUTTON (MUST BE SET!) ---
-// ⚠️ Set your channel's public username (without the @) and the display text.
 const CHANNEL_USERNAME = 'C_F_News'; // 👈 මෙය ඔබගේ Public Channel Username එක ලෙස සකසන්න!
 const CHANNEL_LINK_TEXT = 'C F NEWS ₿'; // Channel එකේ නම
 const CHANNEL_LINK_URL = `https://t.me/${CHANNEL_USERNAME}`; // Button එකේ Link එක
-
 
 // --- Constants ---
 const COLOMBO_TIMEZONE = 'Asia/Colombo';
@@ -26,7 +22,6 @@ const HEADERS = {
 
 const FF_NEWS_URL = "https://www.forexfactory.com/news";
 const FF_CALENDAR_URL = "https://www.forexfactory.com/calendar";
-const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 
 
 // --- KV KEYS ---
@@ -36,6 +31,9 @@ const LAST_IMAGE_URL_KEY = 'last_image_url';
 const LAST_ECONOMIC_EVENT_ID_KEY = 'last_economic_event_id'; 
 const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message'; 
 
+// --- CONSTANT FOR MISSING DESCRIPTION CHECK ---
+const FALLBACK_DESCRIPTION_EN = "No description found.";
+
 
 // =================================================================
 // --- UTILITY FUNCTIONS ---
@@ -43,18 +41,14 @@ const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message';
 
 /**
  * Sends a message to Telegram, optionally including an inline keyboard and as a reply.
- * @param {string} chatId - The target chat ID.
- * @param {string} message - The message text.
- * @param {string} [imgUrl=null] - Optional image URL for sendPhoto.
- * @param {object} [replyMarkup=null] - Optional inline keyboard object.
- * @param {number} [replyToId=null] - Optional message ID to reply to.
- * @returns {Promise<boolean>} Success status.
  */
-async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarkup = null, replyToId = null) {
+async function sendRawTelegramMessage(env, chatId, message, imgUrl = null, replyMarkup = null, replyToId = null) {
+    const TELEGRAM_TOKEN = env.TELEGRAM_TOKEN;
     if (!TELEGRAM_TOKEN) {
-        console.error("TELEGRAM_TOKEN is missing.");
+        console.error("TELEGRAM_TOKEN is missing in ENV.");
         return false;
     }
+    const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
     
     let currentImgUrl = imgUrl; 
     let apiMethod = currentImgUrl ? 'sendPhoto' : 'sendMessage';
@@ -79,7 +73,6 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
         // Add reply mechanism
         if (replyToId) {
             payload.reply_to_message_id = replyToId;
-            // Optionally, prevent a notification for the reply
             payload.allow_sending_without_reply = true;
         }
 
@@ -147,7 +140,6 @@ async function writeKV(env, key, value) {
 }
 
 async function translateText(text) {
-    // This uses an unofficial Google Translate endpoint, which might be unstable or break.
     const translationApiUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=si&dt=t&q=${encodeURIComponent(text)}`;
     try {
         const response = await fetch(translationApiUrl);
@@ -163,17 +155,16 @@ async function translateText(text) {
 }
 
 
-// --- NEW FEATURE: Membership Check Function ---
-
 /**
  * Checks if a user is a member (or admin/creator) of the specified CHAT_ID channel.
- * @param {number} userId - The user's Telegram ID.
- * @returns {Promise<boolean>} True if the user is a member, false otherwise.
  */
-async function checkChannelMembership(userId) {
+async function checkChannelMembership(env, userId) {
+    const TELEGRAM_TOKEN = env.TELEGRAM_TOKEN;
+    const CHAT_ID = env.CHAT_ID;
+    const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
+
     if (!TELEGRAM_TOKEN || !CHAT_ID) return false;
 
-    // Use CHAT_ID which is the main channel ID (e.g., -1001234567890)
     const url = `${TELEGRAM_API_URL}/getChatMember?chat_id=${CHAT_ID}&user_id=${userId}`;
 
     try {
@@ -196,17 +187,111 @@ async function checkChannelMembership(userId) {
 
 
 // =================================================================
+// --- GEMINI AI INTEGRATION ---
+// =================================================================
+
+/**
+ * Uses Gemini to generate a short Sinhala summary and sentiment analysis for the news.
+ */
+async function getAISentimentSummary(env, headline, description) {
+    const GEMINI_API_KEY = env.GEMINI_API_KEY;
+    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
+    
+    // Return a message if no key is set (IMPORTANT: Prevents failure if GEMINI_API_KEY is empty)
+    if (!GEMINI_API_KEY) {
+        return "⚠️ **AI විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ (API Key නැත).**";
+    }
+
+    const maxRetries = 3;
+    const initialDelay = 1000;
+
+    const systemPrompt = `Act as a world-class Forex and Crypto market fundamental analyst. Your task is to provide a very brief analysis of the following news, focusing on the sentiment (Bullish, Bearish, or Neutral) and the potential impact on the primary currency mentioned in the headline (e.g., USD, EUR, BTC, etc.). Use Google Search to ensure the analysis is based on up-to-date market context. The final output MUST be a JSON object with the following structure: {"sentiment": "Bullish/Bearish/Neutral", "summary_sinhala": "Sinhala translation of the analysis (very brief, maximum 2 sentences)."}`;
+    
+    const userQuery = `Analyze the potential market impact of this news and provide a brief summary in Sinhala. Headline: "${headline}". Description: "${description}"`;
+
+    const payload = {
+        contents: [{ parts: [{ text: userQuery }] }],
+        tools: [{ "google_search": {} }],
+        systemInstruction: {
+            parts: [{ text: systemPrompt }]
+        },
+        generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: {
+                type: "OBJECT",
+                properties: {
+                    "sentiment": { "type": "STRING", description: "The market sentiment: Bullish, Bearish, or Neutral." },
+                    "summary_sinhala": { "type": "STRING", description: "A very brief (max 2 sentence) Sinhala summary of the analysis." }
+                },
+                propertyOrdering: ["sentiment", "summary_sinhala"]
+            }
+        }
+    };
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            const response = await fetch(GEMINI_API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.status === 429) {
+                // Rate limit: exponential backoff
+                const delay = initialDelay * Math.pow(2, attempt);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue;
+            }
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error(`Gemini API Error: ${response.status} - ${errorText}`);
+                throw new Error("Gemini API call failed.");
+            }
+
+            const result = await response.json();
+            const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+            
+            if (!jsonText) {
+                 throw new Error("Gemini response was empty or malformed.");
+            }
+            
+            const parsedJson = JSON.parse(jsonText);
+            const sentiment = parsedJson.sentiment || 'Neutral';
+            const summarySi = parsedJson.summary_sinhala || 'AI විශ්ලේෂණයක් සැපයීමට නොහැකි විය.';
+            
+            // Format the final output string
+            let sentimentEmoji = '⚪';
+            if (sentiment.toLowerCase().includes('bullish')) sentimentEmoji = '🟢 Bullish 🐂';
+            else if (sentiment.toLowerCase().includes('bearish')) sentimentEmoji = '🔴 Bearish 🐻';
+            else sentimentEmoji = '🟡 Neutral ⚖️';
+
+            return `\n\n✨ <b>AI වෙළඳපොළ විශ්ලේෂණය</b> ✨\n` +
+                   `<b>📈 බලපෑම:</b> ${sentimentEmoji}\n` +
+                   `<b>📝 සාරාංශය:</b> ${summarySi}`;
+        } catch (error) {
+            console.error(`Gemini API attempt ${attempt + 1} failed:`, error);
+            if (attempt === maxRetries - 1) {
+                // Last attempt failed
+                return "\n\n⚠️ <b>AI විශ්ලේෂණය ලබා ගැනීමට නොහැකි විය.</b>";
+            }
+            const delay = initialDelay * Math.pow(2, attempt);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+}
+
+
+// =================================================================
 // --- ECONOMIC CALENDAR LOGIC ---
 // =================================================================
 
 function analyzeComparison(actual, previous) {
     try {
-        // Function to clean and parse numerical values
         const cleanAndParse = (value) => parseFloat(value.replace(/%|,|K|M|B/g, '').trim() || '0');
         const a = cleanAndParse(actual);
         const p = cleanAndParse(previous);
 
-        // Check for non-numerical, missing, or holiday data
         if (isNaN(a) || isNaN(p) || actual.trim() === '-' || actual.trim() === '' || actual.toLowerCase().includes('holiday')) {
             return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
         }
@@ -225,7 +310,6 @@ function analyzeComparison(actual, previous) {
 }
 
 async function getLatestEconomicEvents() {
-    // Only fetching the calendar page, not the detail pages.
     const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
     if (!resp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${resp.status} on calendar page.`);
 
@@ -240,7 +324,6 @@ async function getLatestEconomicEvents() {
         const eventId = row.attr("data-event-id");
         const actual = row.find(".calendar__actual").text().trim();
         
-        // Only process events that have a realized actual value
         if (!eventId || !actual || actual === "-") return;
         
         const currency_td = row.find(".calendar__currency");
@@ -278,6 +361,7 @@ async function getLatestEconomicEvents() {
 }
 
 async function fetchEconomicNews(env) {
+    const CHAT_ID = env.CHAT_ID;
     try {
         const events = await getLatestEconomicEvents();
         
@@ -289,7 +373,6 @@ async function fetchEconomicNews(env) {
         let sentCount = 0;
         let lastSentMessage = ""; 
 
-        // Process events in chronological order (reverse the list)
         for (const event of events.reverse()) { 
             const eventKVKey = LAST_ECONOMIC_EVENT_ID_KEY + "_" + event.id; 
             const lastEventId = await readKV(env, eventKVKey);
@@ -313,7 +396,7 @@ async function fetchEconomicNews(env) {
                 `<b>📈 Market Reaction Forecast:</b> ${reaction}\n\n` +
                 `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
 
-            const sendSuccess = await sendRawTelegramMessage(CHAT_ID, message);
+            const sendSuccess = await sendRawTelegramMessage(env, CHAT_ID, message);
             
             if (sendSuccess) {
                 lastSentMessage = message; 
@@ -322,7 +405,6 @@ async function fetchEconomicNews(env) {
         }
         
         if (sentCount > 0) {
-            // Only update the last message key if something was actually sent
             await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, lastSentMessage); 
             console.log(`[Economic Success] Found and sent ${sentCount} new events. Saved latest to KV.`);
         } else {
@@ -330,7 +412,6 @@ async function fetchEconomicNews(env) {
         }
 
     } catch (error) {
-        // ERROR 1101 වළක්වා ගැනීමට දෝෂය අල්ලා Cloudflare Logs වලට යවයි.
         console.error("[ECONOMIC ERROR] A CRITICAL error occurred during ECONOMIC task:", error.stack);
     }
 }
@@ -346,7 +427,6 @@ async function getLatestForexNews() {
 
     const html = await resp.text();
     const $ = load(html);
-    // Select the first news link that starts with /news/ and does not end with /hit
     const newsLinkTag = $('a[href^="/news/"]').not('a[href$="/hit"]').first();
 
     if (newsLinkTag.length === 0) return null;
@@ -360,16 +440,14 @@ async function getLatestForexNews() {
     const newsHtml = await newsResp.text();
     const $detail = load(newsHtml);
     
-    // Scrape image URL
     let imgUrl = $detail('img.attach').attr('src'); 
-    // Scrape main description copy
-    const description = $detail('p.news__copy').text().trim() || "No description found.";
+    
+    // Scrape main description copy. Use the fallback text if no description is found.
+    const description = $detail('p.news__copy').text().trim() || FALLBACK_DESCRIPTION_EN;
 
-    // Prepend base URL if image path is relative
     if (imgUrl && imgUrl.startsWith('/')) {
         imgUrl = "https://www.forexfactory.com" + imgUrl;
     } else if (!imgUrl || !imgUrl.startsWith('http')) {
-        // Clear if it's not a valid full URL
         imgUrl = null;
     }
     
@@ -377,6 +455,7 @@ async function getLatestForexNews() {
 }
 
 async function fetchForexNews(env) {
+    const CHAT_ID = env.CHAT_ID;
     try {
         const news = await getLatestForexNews();
         if (!news) return;
@@ -392,23 +471,39 @@ async function fetchForexNews(env) {
         
         await writeKV(env, LAST_HEADLINE_KEY, currentHeadline);
 
-        // Translate the description before sending
-        const description_si = await translateText(news.description);
         const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
+
+        // --- STEP 1: Handle Missing Description ---
+        let description_si;
+        if (news.description === FALLBACK_DESCRIPTION_EN) {
+            description_si = "ℹ️ විස්තරයක් නොමැත. වැඩිදුර තොරතුරු සඳහා Forexfactory වෙබ් අඩවියට පිවිසෙන්න.";
+        } else {
+            description_si = await translateText(news.description);
+        }
         
+        // --- STEP 2: Get AI Sentiment Summary (NEW) ---
+        // Only run AI if a description is present (or a brief summary for the fallback text)
+        const newsForAI = (news.description !== FALLBACK_DESCRIPTION_EN) ? news.description : news.headline;
+        const aiSummary = await getAISentimentSummary(env, news.headline, newsForAI);
+        
+        // --- STEP 3: Construct the final message ---
         const message = `<b>📰 Fundamental News (සිංහල)</b>\n\n` +
                         `<b>⏰ Date & Time:</b> ${date_time}\n\n` +
-                        `<b>🌎 Headline (English):</b> ${news.headline}\n\n` +
-                        `<b>🔥 සිංහල:</b> ${description_si}\n\n` +
+                        `<b>🌎 Headline (English):</b> ${news.headline}\n` +
+                        `🔗 <b>Source Link:</b> ${news.newsUrl}\n\n` +
+                        `🔥 <b>සිංහල:</b> ${description_si}\n` + 
+                        
+                        // Inject the AI Summary here
+                        `${aiSummary}\n\n` + 
+                        
                         `<b>🚀 Dev: Mr Chamo 🇱🇰</b>`;
 
         await writeKV(env, LAST_FULL_MESSAGE_KEY, message);
         await writeKV(env, LAST_IMAGE_URL_KEY, news.imgUrl || ''); 
 
         // Send the message, using sendPhoto if imgUrl is available
-        await sendRawTelegramMessage(CHAT_ID, message, news.imgUrl);
+        await sendRawTelegramMessage(env, CHAT_ID, message, news.imgUrl);
     } catch (error) {
-        // ERROR 1101 වළක්වා ගැනීමට දෝෂය අල්ලා Cloudflare Logs වලට යවයි.
         console.error("An error occurred during FUNDAMENTAL task:", error.stack);
     }
 }
@@ -419,47 +514,44 @@ async function fetchForexNews(env) {
 // =================================================================
 
 async function handleTelegramUpdate(update, env) {
+    const CHAT_ID = env.CHAT_ID;
     if (!update.message || !update.message.text) {
-        return; // Ignore non-text messages
+        return; 
     }
     
     const text = update.message.text.trim();
     const command = text.split(' ')[0].toLowerCase();
     const userId = update.message.from.id;
     const chatId = update.message.chat.id; 
-    const messageId = update.message.message_id; // Added to get the ID of the command message
+    const messageId = update.message.message_id; 
     const username = update.message.from.username || update.message.from.first_name;
 
     // --- 1. MANDATORY MEMBERSHIP CHECK ---
-    // Check only for commands that require membership
     if (command === '/economic' || command === '/fundamental') {
-        const isMember = await checkChannelMembership(userId);
+        const isMember = await checkChannelMembership(env, userId);
 
         if (!isMember) {
-            // 1. Create the denial message (HTML mode)
             const denialMessage = 
                 `⛔ <b>Access Denied</b> ⛔\n\n` +
                 `Hey There <a href="tg://user?id=${userId}">${username}</a>,\n` +
                 `You Must Join <b>${CHANNEL_LINK_TEXT}</b> Channel To Use This BOT.\n` +
                 `So, Please Join it & Try Again.👀 Thank You ✍️`;
             
-            // 2. Create the Inline Button
             const replyMarkup = {
                 inline_keyboard: [
                     [{ 
-                        text: `🔥 ${CHANNEL_LINK_TEXT} < / >`, // Button text
-                        url: CHANNEL_LINK_URL // Channel link
+                        text: `🔥 ${CHANNEL_LINK_TEXT} < / >`, 
+                        url: CHANNEL_LINK_URL 
                     }]
                 ]
             };
 
-            // 3. Send the message WITH the inline button AND AS A REPLY
-            await sendRawTelegramMessage(chatId, denialMessage, null, replyMarkup, messageId); 
-            return; // STOP execution
+            await sendRawTelegramMessage(env, chatId, denialMessage, null, replyMarkup, messageId); 
+            return; 
         }
     }
 
-    // --- 2. COMMAND EXECUTION (Only if membership check passed or command is /start) ---
+    // --- 2. COMMAND EXECUTION ---
     switch (command) {
         case '/start':
             const replyText = 
@@ -473,31 +565,29 @@ async function handleTelegramUpdate(update, env) {
                 `🚀 <b>Developer :</b> @chamoddeshan\n` +
                 `🔥 <b>Mr Chamo Corporation ©</b>\n\n` +
                 `◇───────────────◇`;
-            await sendRawTelegramMessage(chatId, replyText, null, null, messageId); // Reply to start command
+            await sendRawTelegramMessage(env, chatId, replyText, null, messageId); 
             break;
 
         case '/fundamental':
         case '/economic':
             const messageKey = (command === '/fundamental') ? LAST_FULL_MESSAGE_KEY : LAST_ECONOMIC_MESSAGE_KEY;
-            // Image URL is only relevant for fundamental news
             const lastImageUrl = (command === '/fundamental') ? await readKV(env, LAST_IMAGE_URL_KEY) : null; 
             
             const lastFullMessage = await readKV(env, messageKey);
             
             if (lastFullMessage) {
-                // Send without button as they are already a member
-                await sendRawTelegramMessage(chatId, lastFullMessage, lastImageUrl, null, messageId); // Reply to news command
+                await sendRawTelegramMessage(env, chatId, lastFullMessage, lastImageUrl, null, messageId); 
             } else {
                 const fallbackText = (command === '/fundamental') 
                     ? "Sorry, no recent fundamental news has been processed yet. Please wait for the next update."
                     : "Sorry, no recent economic event has been processed yet. Please wait for the next update.";
-                await sendRawTelegramMessage(chatId, fallbackText, null, null, messageId); // Reply to news command
+                await sendRawTelegramMessage(env, chatId, fallbackText, null, messageId); 
             }
             break;
 
         default:
             const defaultReplyText = `ඔබට ස්වයංක්‍රීයව පුවත් ලැබෙනු ඇත. වැඩි විස්තර සහ Commands සඳහා <b>/start</b> යොදන්න.`;
-            await sendRawTelegramMessage(chatId, defaultReplyText, null, null, messageId); // Reply to unknown command
+            await sendRawTelegramMessage(env, chatId, defaultReplyText, null, messageId); 
             break;
     }
 }
@@ -518,7 +608,6 @@ async function handleScheduledTasks(env) {
 export default {
     /**
      * Handles scheduled events (Cron trigger) - Checks both types of news
-     * Added try...catch block to prevent Cron from failing entirely (Exceeded Resources/1101)
      */
     async scheduled(event, env, ctx) {
         ctx.waitUntil(
@@ -526,7 +615,6 @@ export default {
                 try {
                     await handleScheduledTasks(env);
                 } catch (error) {
-                    // Log the critical error during the scheduled run.
                     console.error("[CRITICAL CRON FAILURE]: ", error.stack);
                 }
             })()
@@ -535,11 +623,11 @@ export default {
 
     /**
      * Handles Fetch requests (Webhook and Status/Trigger)
-     * Added try...catch block to handle the 1101 Error during manual fetch/webhook.
      */
     async fetch(request, env, ctx) {
         try {
             const url = new URL(request.url);
+            const CHAT_ID = env.CHAT_ID;
 
             // Manual trigger and KV Test Message Save
             if (url.pathname === '/trigger') {
@@ -576,10 +664,7 @@ export default {
             return new Response('Forex News Bot is ready. Use /trigger to test manually.', { status: 200 });
             
         } catch (e) {
-            // This is the safety net for the 1101 error during manual fetch or webhook.
             console.error('[CRITICAL FETCH FAILURE - 1101 ERROR CAUGHT]:', e.stack);
-            
-            // Return a clean 500 status message to the browser/trigger.
             return new Response(`Worker threw an unhandled exception: ${e.message}. Check Cloudflare Worker Logs for Stack Trace.`, { status: 500 });
         }
     }
