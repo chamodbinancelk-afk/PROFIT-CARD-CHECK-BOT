@@ -233,27 +233,24 @@ async function getAISentimentSummary(headline, description) {
     const maxRetries = 3;
     const initialDelay = 1000;
 
-    const systemPrompt = `Act as a world-class Forex and Crypto market fundamental analyst. Your task is to provide a very brief analysis of the following news, focusing on the sentiment (Bullish, Bearish, or Neutral) and the potential impact on the primary currency mentioned in the headline (e.g., USD, EUR, BTC, etc.). Use Google Search to ensure the analysis is based on up-to-date market context. The final output MUST be a JSON object with the following structure: {"sentiment": "Bullish/Bearish/Neutral", "summary_sinhala": "Sinhala translation of the analysis (very brief, maximum 2 sentences)."}`;
+    // 🔴 CHANGE 1: Updated system prompt to request a specific text format
+    const systemPrompt = `Act as a world-class Forex and Crypto market fundamental analyst. Your task is to provide a very brief analysis of the following news, focusing on the sentiment (Bullish, Bearish, or Neutral) and the potential impact on the primary currency mentioned. Use Google Search to ensure the analysis is based on up-to-date market context. The final output MUST be only text in the following exact format: 
+Sentiment: [Bullish/Bearish/Neutral]
+Sinhala Summary: [Sinhala translation of the analysis (very brief, max 2 sentences). Start this summary directly with a capital letter.]`;
     
     const userQuery = `Analyze the potential market impact of this news and provide a brief summary in Sinhala. Headline: "${headline}". Description: "${description}"`;
 
+    // 🔴 CHANGE 2 & 3: Removed responseMimeType and responseSchema from payload
     const payload = {
         contents: [{ parts: [{ text: userQuery }] }],
         tools: [{ "google_search": {} }],
         systemInstruction: {
             parts: [{ text: systemPrompt }]
         },
-        generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema: {
-                type: "OBJECT",
-                properties: {
-                    "sentiment": { "type": "STRING", description: "The market sentiment: Bullish, Bearish, or Neutral." },
-                    "summary_sinhala": { "type": "STRING", description: "A very brief (max 2 sentence) Sinhala summary of the analysis." }
-                },
-                propertyOrdering: ["sentiment", "summary_sinhala"]
-            }
-        }
+        // generationConfig: { REMOVED JSON CONFIGURATION
+        //     responseMimeType: "application/json",
+        //     responseSchema: { ... }
+        // }
     };
     
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -265,7 +262,6 @@ async function getAISentimentSummary(headline, description) {
             });
 
             if (response.status === 429) {
-                // Rate limit: exponential backoff
                 const delay = initialDelay * Math.pow(2, attempt);
                 console.warn(`Gemini API: Rate limit hit (429). Retrying in ${delay}ms...`);
                 await new Promise(resolve => setTimeout(resolve, delay));
@@ -274,23 +270,30 @@ async function getAISentimentSummary(headline, description) {
 
             if (!response.ok) {
                 const errorText = await response.text();
-                // 🔴 IMPROVED LOGGING: Log the actual error for debugging
                 console.error(`Gemini API Error (Attempt ${attempt + 1}): HTTP Status ${response.status} - Response: ${errorText}`);
                 throw new Error("Gemini API call failed with non-OK status.");
             }
 
             const result = await response.json();
-            const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+            const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
             
-            if (!jsonText) {
-                 // 🔴 IMPROVED LOGGING: Log if the response structure is missing content
+            if (!textResponse) {
                  console.error("Gemini API Error: Response was empty or malformed.");
                  throw new Error("Gemini response was empty or malformed.");
             }
             
-            const parsedJson = JSON.parse(jsonText);
-            const sentiment = parsedJson.sentiment || 'Neutral';
-            const summarySi = parsedJson.summary_sinhala || 'AI විශ්ලේෂණයක් සැපයීමට නොහැකි විය.';
+            // 🔴 CHANGE 4: Parsing the text response instead of JSON
+            const lines = textResponse.split('\n');
+            let sentiment = 'Neutral';
+            let summarySi = 'AI විශ්ලේෂණයක් සැපයීමට නොහැකි විය.';
+
+            lines.forEach(line => {
+                if (line.startsWith('Sentiment:')) {
+                    sentiment = line.replace('Sentiment:', '').trim();
+                } else if (line.startsWith('Sinhala Summary:')) {
+                    summarySi = line.replace('Sinhala Summary:', '').trim();
+                }
+            });
             
             // Format the final output string
             let sentimentEmoji = '⚪';
@@ -302,10 +305,8 @@ async function getAISentimentSummary(headline, description) {
                    `<b>📈 බලපෑම:</b> ${sentimentEmoji}\n` +
                    `<b>📝 සාරාංශය:</b> ${summarySi}`;
         } catch (error) {
-            // Log the general failure reason
             console.error(`Gemini API attempt ${attempt + 1} failed:`, error.message);
             if (attempt === maxRetries - 1) {
-                // Last attempt failed
                 return "\n\n⚠️ <b>AI විශ්ලේෂණය ලබා ගැනීමට නොහැකි විය.</b>";
             }
             const delay = initialDelay * Math.pow(2, attempt);
@@ -516,7 +517,6 @@ async function fetchForexNews(env) {
         }
         
         // --- STEP 2: Get AI Sentiment Summary (NEW) ---
-        // Only run AI if a description is present (or a brief summary for the fallback text)
         const newsForAI = (news.description !== FALLBACK_DESCRIPTION_EN) ? news.description : news.headline;
         const aiSummary = await getAISentimentSummary(news.headline, newsForAI);
         
@@ -707,3 +707,4 @@ export default {
         }
     }
 };
+
