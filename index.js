@@ -92,27 +92,44 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
 /**
  * KV Helper Functions
  */
+// ... (ඉහළ කොටස නොවෙනස්ව තබන්න)
+
+// =================================================================
+// --- UTILITY FUNCTIONS ---
+// =================================================================
+
+// ... (sendRawTelegramMessage සහ Translation ශ්‍රිතයන් නොවෙනස්ව තබන්න)
+
+/**
+ * KV Helper Functions - UPDATED FOR STRING CHECK
+ */
 async function readKV(env, key) {
     try {
-        // NEWS_STATE binding එක Cloudflare Dashboard එකේ තිබිය යුතුයි.
+        // Read KV value. We use .get(key) which defaults to null if not found.
         const value = await env.NEWS_STATE.get(key); 
+        // Return null only if value is strictly null or undefined. Empty strings ('') are allowed.
+        // This is crucial for handling cases where KV returns an empty string which is considered 'falsy' in JS
+        if (value === null || value === undefined) {
+            return null;
+        }
         return value;
     } catch (e) {
-        console.error(`KV Read Error (${key}):`, e);
+        console.error(`[KV ERROR] Read Error (${key}):`, e);
         return null;
     }
 }
 
 async function writeKV(env, key, value) {
     try {
-        await env.NEWS_STATE.put(key, value);
+        // Ensure value is always a string before writing
+        await env.NEWS_STATE.put(key, String(value));
     } catch (e) {
-        console.error(`KV Write Error (${key}):`, e);
+        console.error(`[KV ERROR] Write Error (${key}):`, e);
     }
 }
 
-/**
- * Translation Function (Google Translate API)
+// ... (fetchHandler සහ export default කොටස් නොවෙනස්ව තබන්න)
+
  */
 async function translateText(text) {
     const translationApiUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=si&dt=t&q=${encodeURIComponent(text)}`;
