@@ -3,8 +3,7 @@ import { load } from 'cheerio';
 import moment from 'moment-timezone';
 
 // --- CONFIGURATION (KV සහ Environment Variables හරහා සපයන දත්ත) ---
-// ⚠️ මෙම විචල්‍යයන් දැන් Cloudflare Worker Settings හි 'Environment Variables' යටතේ සපයනු ලැබේ.
-// කේතය තුළට API Key එකක් හෝ Token එකක් hardcode කිරීම අවශ්‍ය නොවේ!
+// ⚠️ සියලුම වැදගත් Keys සහ Tokens දැන් Cloudflare Worker Settings හි Environment Variables යටතේ සපයනු ලැබේ.
 
 // --- NEW CONSTANTS FOR MEMBERSHIP CHECK AND BUTTON (MUST BE SET!) ---
 const CHANNEL_USERNAME = 'C_F_News'; // 👈 මෙය ඔබගේ Public Channel Username එක ලෙස සකසන්න!
@@ -41,6 +40,7 @@ const FALLBACK_DESCRIPTION_EN = "No description found.";
 
 /**
  * Sends a message to Telegram, optionally including an inline keyboard and as a reply.
+ * Retrieves TELEGRAM_TOKEN from the environment (env).
  */
 async function sendRawTelegramMessage(env, chatId, message, imgUrl = null, replyMarkup = null, replyToId = null) {
     const TELEGRAM_TOKEN = env.TELEGRAM_TOKEN;
@@ -116,8 +116,16 @@ async function sendRawTelegramMessage(env, chatId, message, imgUrl = null, reply
 }
 
 
+/**
+ * Reads data from the KV Namespace, which must be bound as NEWS_STATE.
+ */
 async function readKV(env, key) {
     try {
+        // Ensure NEWS_STATE binding exists
+        if (!env.NEWS_STATE) {
+            console.error("KV Binding 'NEWS_STATE' is missing in ENV.");
+            return null;
+        }
         const value = await env.NEWS_STATE.get(key); 
         if (value === null || value === undefined) {
             return null;
@@ -129,8 +137,16 @@ async function readKV(env, key) {
     }
 }
 
+/**
+ * Writes data to the KV Namespace, which must be bound as NEWS_STATE.
+ */
 async function writeKV(env, key, value) {
     try {
+         // Ensure NEWS_STATE binding exists
+        if (!env.NEWS_STATE) {
+            console.error("KV Binding 'NEWS_STATE' is missing in ENV. Write failed.");
+            return;
+        }
         // Setting TTL for event IDs for cleanup (30 days)
         const expirationTtl = key.startsWith(LAST_ECONOMIC_EVENT_ID_KEY) ? 2592000 : undefined;
         await env.NEWS_STATE.put(key, String(value), { expirationTtl });
@@ -192,12 +208,13 @@ async function checkChannelMembership(env, userId) {
 
 /**
  * Uses Gemini to generate a short Sinhala summary and sentiment analysis for the news.
+ * Retrieves GEMINI_API_KEY from the environment (env).
  */
 async function getAISentimentSummary(env, headline, description) {
     const GEMINI_API_KEY = env.GEMINI_API_KEY;
     const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
     
-    // Return a message if no key is set (IMPORTANT: Prevents failure if GEMINI_API_KEY is empty)
+    // Return a message if no key is set 
     if (!GEMINI_API_KEY) {
         return "⚠️ **AI විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ (API Key නැත).**";
     }
@@ -514,7 +531,9 @@ async function fetchForexNews(env) {
 // =================================================================
 
 async function handleTelegramUpdate(update, env) {
-    const CHAT_ID = env.CHAT_ID;
+    // Read the required environment variables immediately
+    const CHAT_ID = env.CHAT_ID; 
+
     if (!update.message || !update.message.text) {
         return; 
     }
@@ -528,6 +547,7 @@ async function handleTelegramUpdate(update, env) {
 
     // --- 1. MANDATORY MEMBERSHIP CHECK ---
     if (command === '/economic' || command === '/fundamental') {
+        // NOTE: CHAT_ID is read from env at the function start
         const isMember = await checkChannelMembership(env, userId);
 
         if (!isMember) {
@@ -565,7 +585,7 @@ async function handleTelegramUpdate(update, env) {
                 `🚀 <b>Developer :</b> @chamoddeshan\n` +
                 `🔥 <b>Mr Chamo Corporation ©</b>\n\n` +
                 `◇───────────────◇`;
-            await sendRawTelegramMessage(env, chatId, replyText, null, messageId); 
+            await sendRawTelegramMessage(env, chatId, replyText, null, null, messageId); 
             break;
 
         case '/fundamental':
@@ -581,13 +601,13 @@ async function handleTelegramUpdate(update, env) {
                 const fallbackText = (command === '/fundamental') 
                     ? "Sorry, no recent fundamental news has been processed yet. Please wait for the next update."
                     : "Sorry, no recent economic event has been processed yet. Please wait for the next update.";
-                await sendRawTelegramMessage(env, chatId, fallbackText, null, messageId); 
+                await sendRawTelegramMessage(env, chatId, fallbackText, null, null, messageId); 
             }
             break;
 
         default:
             const defaultReplyText = `ඔබට ස්වයංක්‍රීයව පුවත් ලැබෙනු ඇත. වැඩි විස්තර සහ Commands සඳහා <b>/start</b> යොදන්න.`;
-            await sendRawTelegramMessage(env, chatId, defaultReplyText, null, messageId); 
+            await sendRawTelegramMessage(env, chatId, defaultReplyText, null, null, messageId); 
             break;
     }
 }
@@ -627,7 +647,6 @@ export default {
     async fetch(request, env, ctx) {
         try {
             const url = new URL(request.url);
-            const CHAT_ID = env.CHAT_ID;
 
             // Manual trigger and KV Test Message Save
             if (url.pathname === '/trigger') {
