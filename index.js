@@ -186,10 +186,10 @@ async function getLatestEconomicEvents() {
         const eventId = row.attr("data-event-id");
 
         // --- IMPROVED ACTUAL VALUE SELECTION ---
-        // Look for any cell that has the 'actual' class, and ensure it is not empty or just a dash.
         const actualElement = row.find(".calendar__actual");
         const actual = actualElement.text().trim();
         
+        // This check attempts to filter out events that haven't been released yet (Actual value is empty or just a dash)
         if (actual && actual !== "-" && eventId && actualElement.css('color') !== 'rgb(175, 175, 175)') {
             
              const currency_td = row.find(".calendar__currency");
@@ -239,10 +239,31 @@ async function getLatestEconomicEvents() {
 async function fetchEconomicNews(env) {
     try {
         const events = await getLatestEconomicEvents();
+        
+        // --- HARDCODE TEST MESSAGE ---
         if (events.length === 0) {
-             console.info("[Economic Check] No events with Actual values found.");
-             return;
+             console.info("[Economic Check] No live events with Actual values found. Running hardcode test.");
+             
+             const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
+             const testMessage = `<b>✅ Economic Message Test Successful!</b>\n\n` +
+                                 `⏰ <b>Test Time:</b> ${date_time}\n\n` +
+                                 `⚠️ <b>Note:</b> No live events were scraped from Forex Factory, so this is a temporary test message.\n\n` +
+                                 `<b>/economic</b> command will now show this message until a real event is sent to the channel.`;
+
+             // Send the test message to the channel
+             const sendSuccess = await sendRawTelegramMessage(CHAT_ID, testMessage);
+             
+             if (sendSuccess) {
+                 // Save the test message to KV to prove the command logic works
+                 await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, testMessage); 
+                 console.log("[Economic Test Success] Test message sent and KV updated.");
+             } else {
+                 console.error("[Economic Test Failure] Failed to send test message to Telegram.");
+             }
+             return; 
         }
+        // --- END HARDCODE TEST MESSAGE ---
+
 
         let sentCount = 0;
         let lastSentMessage = ""; 
@@ -284,9 +305,6 @@ async function fetchEconomicNews(env) {
                 lastSentMessage = message; 
                 sentCount++;
             } else {
-                 // If sending failed, revert the KV entry for this event so it retries next time
-                 // (Optional: Reverting is safer but can lead to duplicates if Telegram API failure is temporary)
-                 // await env.NEWS_STATE.delete(eventKVKey); 
                  console.warn(`[Economic Revert] Failed to send new event. Reverting KV for ID: ${event.id} is skipped.`);
             }
         }
@@ -487,7 +505,6 @@ export default {
                             if (economicMessage) {
                                 await sendRawTelegramMessage(chatId, economicMessage); 
                             } else {
-                                // This is what is currently running, as the KV is empty.
                                 replyText = "Sorry, no recent economic event has been processed yet. Please wait for the next update.";
                                 await sendRawTelegramMessage(chatId, replyText);
                             }
