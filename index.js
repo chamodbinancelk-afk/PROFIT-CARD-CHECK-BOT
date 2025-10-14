@@ -184,7 +184,7 @@ async function translateTextWithGemini(text) {
     const initialDelay = 1000;
 
     // System prompt for conversational Sinhala translation
-    const systemPrompt = "You are a highly skilled professional translator. Translate the following English news description into fluent, natural, and conversational Sinhala (කථන භාෂාව). The output must only be the translated text, without any labels, pre-text, or post-text, and should use simple, easy-to-understand language.";
+    const systemPrompt = "You are a highly skilled professional translator. Translate the following English news description into fluent, natural, and conversational Sinhala (කථන භාෂාව). The output must only be the translated text, without any labels, pre-text, or post-text, and should use simple, easy-to-understand language. Do not output anything other than the translated text.";
     
     const userQuery = `Translate the following news description into conversational Sinhala: "${text}"`;
 
@@ -217,9 +217,11 @@ async function translateTextWithGemini(text) {
             const translatedText = result.candidates?.[0]?.content?.parts?.[0]?.text;
             
             if (!translatedText || translatedText.trim() === '') {
+                // If Gemini returns empty, throw error to retry or use fallback
                 throw new Error("Gemini response was empty.");
             }
             
+            // 🚨 FIX: Return the text directly without further parsing
             return translatedText.trim();
         } catch (error) {
             console.error(`Gemini Translation attempt ${attempt + 1} failed:`, error.message);
@@ -627,6 +629,7 @@ async function getLatestForexNews() {
     let imgUrl = $detail('img.attach').attr('src'); 
     
     // Scrape main description copy. Use the fallback text if no description is found.
+    // NOTE: Sometimes the news description is missing, leading to unexpected scraping behavior.
     const description = $detail('p.news__copy').text().trim() || FALLBACK_DESCRIPTION_EN;
 
     if (imgUrl && imgUrl.startsWith('/')) {
@@ -662,7 +665,7 @@ async function fetchForexNews(env) {
         if (news.description === FALLBACK_DESCRIPTION_EN) {
             description_si = "විස්තරයක් හමු නොවීය.";
         } else {
-            // 🚨 NEW: Use Gemini for conversational translation 
+            // Use Gemini for conversational translation 
             description_si = await translateTextWithGemini(news.description);
         }
         
@@ -674,7 +677,7 @@ async function fetchForexNews(env) {
         const message = `<b>📰 Fundamental News (සිංහල)</b>\n\n` +
                         `<b>⏰ Date & Time:</b> ${date_time}\n\n` +
                         `<b>🌎 Headline (English):</b> ${news.headline}\n\n` +
-                        `🔥 <b>සිංහල:</b> ${description_si}\n\n` + 
+                        `🔥 <b>සිංහල:</b> ${description_si}\n\n` +  // 🚨 FIX: This variable now holds the direct translation
                         
                         // Inject the AI Summary here
                         `${aiSummary}\n\n` + 
