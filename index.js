@@ -318,6 +318,52 @@ async function getLatestEconomicEvents() {
                     } else if (classList.includes('impact-icon--medium') || classList.includes('medium')) {
                         impactText = "Medium Impact Expected";
                     } else if (classList.includes('impact-icon--low') || classList.includes('low')) {
+// --- ECONOMIC CALENDAR LOGIC ---
+
+/**
+ * Scrapes the Forex Factory calendar for ALL released economic events
+ * (those with an Actual value) and returns them as an array.
+ * We prioritize fetching all realized events to avoid missing any.
+ */
+async function getLatestEconomicEvents() {
+    const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
+    if (!resp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${resp.status} on calendar page.`);
+
+    const html = await resp.text();
+    const $ = load(html);
+    const rows = $('.calendar__row');
+
+    const realizedEvents = [];
+    
+    // Iterate through all rows (starting from the oldest realized event in the current view)
+    for (let i = 0; i < rows.length; i++) {
+        const row = $(rows[i]);
+        const eventId = row.attr("data-event-id");
+
+        const actual = row.find(".calendar__actual").text().trim();
+        
+        // 1. Only consider events that have an Actual value
+        if (actual && actual !== "-" && eventId) {
+            
+             const currency_td = row.find(".calendar__currency");
+             const title_td = row.find(".calendar__event");
+             const previous_td = row.find(".calendar__previous");
+             const impact_td = row.find('.calendar__impact');
+             const time_td = row.find('.calendar__time'); // Need to capture time for display
+             
+             // Robust Impact Extraction
+             let impactText = "Unknown";
+             const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first(); 
+             
+             if (impactElement.length > 0) {
+                impactText = impactElement.attr('title') || "Unknown"; 
+                if (impactText === "Unknown") {
+                    const classList = impactElement.attr('class') || "";
+                    if (classList.includes('impact-icon--high') || classList.includes('high')) {
+                        impactText = "High Impact Expected";
+                    } else if (classList.includes('impact-icon--medium') || classList.includes('medium')) {
+                        impactText = "Medium Impact Expected";
+                    } else if (classList.includes('impact-icon--low') || classList.includes('low')) {
                         impactText = "Low Impact Expected";
                     } else if (classList.includes('impact-icon--holiday') || classList.includes('holiday')) {
                         impactText = "Non-Economic/Holiday";
@@ -325,45 +371,55 @@ async function getLatestEconomicEvents() {
                 }
              }
 
-             latestEvents.push({
+             realizedEvents.push({
                  id: eventId,
                  currency: currency_td.text().trim(),
                  title: title_td.text().trim(),
                  actual: actual,
                  previous: previous_td.text().trim() || "0",
-                 impact: impactText 
+                 impact: impactText,
+                 time: time_td.text().trim() 
              });
         }
     }
     
-    // Reverse the array so the oldest event of the batch is processed first (optional)
-    return latestEvents.reverse(); 
+    // Return the events in the order they appear on the page (oldest to newest)
+    return realizedEvents; 
 }
 
 /**
  * Handles fetching, processing, and sending ALL economic calendar events 
- * that released at the latest time.
+ * that have an Actual value but have not been sent yet.
  */
 async function fetchEconomicNews(env) {
     try {
         const events = await getLatestEconomicEvents();
-        if (events.length === 0) return;
+        if (events.length === 0) {
+             console.info("[Economic Check] No events with Actual values found.");
+             return;
+        }
 
         let sentCount = 0;
         let finalMessage = "";
 
-        // 3. Process each event found
+        // Process each realized event
         for (const event of events) {
             // Create a unique KV key for each specific event using its ID
             const eventKVKey = LAST_ECONOMIC_EVENT_ID_KEY + "_" + event.id; 
             const lastEventId = await readKV(env, eventKVKey);
             
+            // If the event ID is already saved, it means we have processed and sent it.
             if (event.id === lastEventId) {
-                console.info(`[Economic Check] Event already processed. ID: ${event.id}`);
-                continue; // Skip this event
+                // If it's not new, we still update the finalMessage so the command always gets the latest event.
+                finalMessage = `<b>🚨 Economic Calendar Release 🔔</b>\n\n` +
+                                `⏰ <b>Time:</b> ${event.time} | <b>Currency:</b> ${event.currency}\n` +
+                                `📌 <b>Headline:</b> ${event.title}\n\n` +
+                                `📈 <b>Actual:</b> ${event.actual} | <b>Previous:</b> ${event.previous}\n\n` +
+                                `⚙️ (Processed previously)`;
+                continue; 
             }
             
-            // --- ONLY PROCEED IF THE EVENT IS NEWLY REALIZED ---
+            // --- PROCESS AND SEND IF THE EVENT IS NEWLY REALIZED ---
             await writeKV(env, eventKVKey, event.id);
 
             const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
@@ -372,7 +428,8 @@ async function fetchEconomicNews(env) {
             // Construct the message for this single event
             const message = 
                 `<b>🚨 Economic Calendar Release 🔔</b>\n\n` +
-                `⏰ <b>Date & Time:</b> ${date_time}\n\n` +
+                `⏰ <b>Date & Time:</b> ${date_time}\n` +
+                `🕓 <b>Release Time:</b> ${event.time} (FF)\n\n` +
                 `🌍 <b>Currency:</b> ${event.currency}\n` +
                 `📌 <b>Headline:</b> ${event.title}\n\n` +
                 `📈 <b>Actual:</b> ${event.actual}\n` +
@@ -384,15 +441,15 @@ async function fetchEconomicNews(env) {
             // Send the individual message immediately
             await sendRawTelegramMessage(CHAT_ID, message);
             
-            // Build a cumulative message for the /economic command (using only the last event for simplicity)
+            // Update the message for the /economic command
             finalMessage = message; 
             sentCount++;
         }
         
-        if (sentCount > 0) {
-            // Save the message of the last processed event to the main KV key for the /economic command response
+        if (finalMessage) {
+            // Save the message of the last processed event (new or old) to the main KV key for the /economic command response
             await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, finalMessage); 
-            console.log(`[Economic Success] Sent ${sentCount} new events.`);
+            console.log(`[Economic Success] Found and sent ${sentCount} new events. Total events realized: ${events.length}.`);
         }
 
     } catch (error) {
