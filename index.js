@@ -1,5 +1,12 @@
-const { load } = require('cheerio');
-const moment = require('moment-timezone');
+// --- ES MODULE IMPORTS ---
+// IMPORTANT: Use dynamic imports for cheerio/moment-timezone to align with the Worker environment
+// Cloudflare Workers often require these to be imported this way or bundled correctly.
+
+// We will rely on the global/worker environment for fetch and the bundled libraries.
+// Since the environment is set to "module" in package.json, we must use import/export.
+
+import { load } from 'cheerio';
+import moment from 'moment-timezone';
 
 // 🚨🚨 CRITICAL: ඔබගේ සැබෑ BOT TOKEN එක මෙහි ඇතුල් කරන්න! 🚨🚨
 const TELEGRAM_TOKEN = '8299929776:AAEFqh0J0kVqzioFF2ft5okOtQqO_8evviY'; 
@@ -27,6 +34,7 @@ const LAST_FULL_MESSAGE_KEY = 'last_full_news_message';
 const LAST_IMAGE_URL_KEY = 'last_image_url'; 
 
 // Economic Calendar Keys
+// Note: We use this prefix for per-event unique IDs (e.g., last_economic_event_id_12345)
 const LAST_ECONOMIC_EVENT_ID_KEY = 'last_economic_event_id'; 
 const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message'; 
 
@@ -38,7 +46,6 @@ const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message';
 /**
  * Utility function to send raw messages via Telegram API.
  * Includes robust retry and sendPhoto -> sendMessage fallback.
- * (sendPhoto is used if imgUrl is provided, otherwise sendMessage is used)
  */
 async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
     if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN') {
@@ -46,7 +53,7 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
         return;
     }
     
-    let currentImgUrl = imgUrl; // Image URL for sendPhoto attempt
+    let currentImgUrl = imgUrl; 
     let apiMethod = currentImgUrl ? 'sendPhoto' : 'sendMessage';
     let maxAttempts = 3;
 
@@ -57,9 +64,8 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
             payload.photo = currentImgUrl;
             payload.caption = message;
         } else {
-            // Fallback or standard sendMessage
             payload.text = message;
-            apiMethod = 'sendMessage'; // Ensure method is correctly set for retry
+            apiMethod = 'sendMessage'; 
         }
 
         const apiURL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/${apiMethod}`;
@@ -82,20 +88,19 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
                 const errorText = await response.text();
                 console.error(`[TELEGRAM ERROR] API Rejected (${apiMethod}, Attempt ${attempt + 1}): ${response.status} - ${errorText}`);
                 
-                // CRITICAL FALLBACK LOGIC: If sendPhoto fails, switch to sendMessage (text-only) and retry immediately.
+                // CRITICAL FALLBACK LOGIC: If sendPhoto fails, switch to sendMessage (text-only) and retry.
                 if (apiMethod === 'sendPhoto') {
                     console.warn("[TELEGRAM FALLBACK] sendPhoto failed. Retrying immediately as sendMessage (text-only).");
-                    currentImgUrl = null; // Disable image for next attempt
+                    currentImgUrl = null; 
                     apiMethod = 'sendMessage';
-                    // Reset attempt counter to 0 for the new method, allowing 3 sendMessage retries.
-                    attempt = -1; // Next iteration will be attempt 0
+                    attempt = -1; // Next iteration will be attempt 0 for sendMessage
                     continue; 
                 }
                 
-                break; // If sendMessage fails, break the loop
+                break; 
             }
             console.log(`[TELEGRAM SUCCESS] Message sent successfully via ${apiMethod}.`);
-            return; // Success
+            return; 
         } catch (error) {
             console.error("[TELEGRAM ERROR] Error sending message:", error);
             const delay = Math.pow(2, attempt) * 1000;
@@ -129,6 +134,7 @@ async function writeKV(env, key, value) {
  * Translation Function
  */
 async function translateText(text) {
+    // This uses the unofficial Google Translate API endpoint, which is compatible with Workers.
     const translationApiUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=si&dt=t&q=${encodeURIComponent(text)}`;
     try {
         const response = await fetch(translationApiUrl);
@@ -298,7 +304,7 @@ async function fetchEconomicNews(env) {
         if (finalMessage) {
             // Save the message of the last processed event (new or old) to the main KV key for the /economic command response
             await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, finalMessage); 
-            console.log(`[Economic Success] Found and sent ${sentCount} new events.`);
+            console.log(`[Economic Success] Found and sent ${sentCount} new events. Total events realized: ${events.length}.`);
         }
 
     } catch (error) {
@@ -397,7 +403,7 @@ async function fetchForexNews(env) {
 
 
 // =================================================================
-// --- CLOUDFLARE WORKER HANDLERS (CommonJS Export Fix) ---
+// --- CLOUDFLARE WORKER HANDLERS (ES Module Export) ---
 // =================================================================
 
 async function handleScheduledTasks(env) {
@@ -408,9 +414,10 @@ async function handleScheduledTasks(env) {
 }
 
 /**
- * The final export for the Cloudflare Worker using CommonJS syntax (module.exports).
+ * The default export for the Cloudflare Worker using ES Module syntax.
+ * This MUST be used if package.json specifies "type": "module".
  */
-module.exports = {
+export default {
     /**
      * Handles scheduled events (Cron trigger) - Checks both types of news
      */
