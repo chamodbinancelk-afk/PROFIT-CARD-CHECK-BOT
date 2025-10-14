@@ -9,7 +9,6 @@ const CHAT_ID = '-1003177936060';
 
 // --- Constants ---
 const COLOMBO_TIMEZONE = 'Asia/Colombo';
-// Scraping Block වීම වළක්වා ගැනීමට ශක්තිමත් Headers භාවිතා කිරීම.
 const HEADERS = { 
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36',
     'Accept-Language': 'en-US,en;q=0.9',
@@ -18,8 +17,8 @@ const HEADERS = {
 };
 
 // URLs
-const FF_NEWS_URL = "https://www.forexfactory.com/news"; // Fundamental News
-const FF_CALENDAR_URL = "https://www.forexfactory.com/calendar"; // Economic Events
+const FF_NEWS_URL = "https://www.forexfactory.com/news";
+const FF_CALENDAR_URL = "https://www.forexfactory.com/calendar";
 
 // --- KV KEYS ---
 // Fundamental News Keys
@@ -38,29 +37,33 @@ const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message';
 
 /**
  * Utility function to send raw messages via Telegram API.
- * Uses sendPhoto if imgUrl is provided, otherwise uses sendMessage.
+ * Includes robust retry and sendPhoto -> sendMessage fallback.
+ * (sendPhoto is used if imgUrl is provided, otherwise sendMessage is used)
  */
 async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
     if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN') {
-        console.error("TELEGRAM_TOKEN is missing or not updated.");
+        console.error("[TELEGRAM ERROR] TELEGRAM_TOKEN is missing.");
         return;
     }
     
-    let apiMethod = imgUrl ? 'sendPhoto' : 'sendMessage';
-    let payload = { chat_id: chatId, parse_mode: 'HTML' };
+    let currentImgUrl = imgUrl; // Image URL for sendPhoto attempt
+    let apiMethod = currentImgUrl ? 'sendPhoto' : 'sendMessage';
+    let maxAttempts = 3;
 
-    if (imgUrl) {
-        // Telegram API requires the message to be in the 'caption' field for sendPhoto
-        payload.photo = imgUrl;
-        payload.caption = message;
-    } else {
-        payload.text = message;
-    }
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        let payload = { chat_id: chatId, parse_mode: 'HTML' };
 
-    const apiURL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/${apiMethod}`;
-    
-    // Exponential backoff implemented for robustness
-    for (let attempt = 0; attempt < 3; attempt++) {
+        if (apiMethod === 'sendPhoto' && currentImgUrl) {
+            payload.photo = currentImgUrl;
+            payload.caption = message;
+        } else {
+            // Fallback or standard sendMessage
+            payload.text = message;
+            apiMethod = 'sendMessage'; // Ensure method is correctly set for retry
+        }
+
+        const apiURL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/${apiMethod}`;
+        
         try {
             const response = await fetch(apiURL, {
                 method: 'POST',
@@ -70,19 +73,31 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
 
             if (response.status === 429) {
                 const delay = Math.pow(2, attempt) * 1000;
+                console.warn(`[TELEGRAM WARNING] Rate limit hit. Retrying in ${delay}ms...`);
                 await new Promise(resolve => setTimeout(resolve, delay));
                 continue; 
             }
 
             if (!response.ok) {
                 const errorText = await response.text();
-                // ⚠️ Error Log එක මෙතනින් දැකගත හැක.
-                console.error(`Telegram API Error (${apiMethod}): ${response.status} - ${errorText}`);
-                break;
+                console.error(`[TELEGRAM ERROR] API Rejected (${apiMethod}, Attempt ${attempt + 1}): ${response.status} - ${errorText}`);
+                
+                // CRITICAL FALLBACK LOGIC: If sendPhoto fails, switch to sendMessage (text-only) and retry immediately.
+                if (apiMethod === 'sendPhoto') {
+                    console.warn("[TELEGRAM FALLBACK] sendPhoto failed. Retrying immediately as sendMessage (text-only).");
+                    currentImgUrl = null; // Disable image for next attempt
+                    apiMethod = 'sendMessage';
+                    // Reset attempt counter to 0 for the new method, allowing 3 sendMessage retries.
+                    attempt = -1; // Next iteration will be attempt 0
+                    continue; 
+                }
+                
+                break; // If sendMessage fails, break the loop
             }
+            console.log(`[TELEGRAM SUCCESS] Message sent successfully via ${apiMethod}.`);
             return; // Success
         } catch (error) {
-            console.error("Error sending message to Telegram:", error);
+            console.error("[TELEGRAM ERROR] Error sending message:", error);
             const delay = Math.pow(2, attempt) * 1000;
             await new Promise(resolve => setTimeout(resolve, delay));
         }
@@ -90,15 +105,14 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
 }
 
 /**
- * KV Helper Functions
+ * KV Helper Functions (No change)
  */
 async function readKV(env, key) {
     try {
-        // NEWS_STATE binding එක Cloudflare Dashboard එකේ තිබිය යුතුයි.
         const value = await env.NEWS_STATE.get(key); 
         return value;
     } catch (e) {
-        console.error(`KV Read Error (${key}):`, e);
+        console.error(`[KV ERROR] Read Error (${key}):`, e);
         return null;
     }
 }
@@ -107,12 +121,12 @@ async function writeKV(env, key, value) {
     try {
         await env.NEWS_STATE.put(key, value);
     } catch (e) {
-        console.error(`KV Write Error (${key}):`, e);
+        console.error(`[KV ERROR] Write Error (${key}):`, e);
     }
 }
 
 /**
- * Translation Function (Google Translate API)
+ * Translation Function (No change)
  */
 async function translateText(text) {
     const translationApiUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=si&dt=t&q=${encodeURIComponent(text)}`;
@@ -124,62 +138,37 @@ async function translateText(text) {
         }
         throw new Error("Invalid translation response structure.");
     } catch (e) {
-        console.error('Translation API Error. Using original text.', e);
+        console.error('[TRANSLATION ERROR] Translation API Error. Using original text.', e);
         return `[Translation Failed: ${text}]`;
     }
 }
 
-// =================================================================
-// --- ECONOMIC CALENDAR LOGIC ---
-// =================================================================
-
-/**
- * Economic Event එකේ Actual/Previous සංසන්දනය කර සිංහල විශ්ලේෂණය ලබා දෙයි.
- */
+// ... (Economic Calendar Logic - Working, no changes needed)
 function analyzeComparison(actual, previous) {
     try {
         const cleanAndParse = (value) => parseFloat(value.replace(/%|,/g, '').trim() || '0');
-
         const a = cleanAndParse(actual);
         const p = cleanAndParse(previous);
 
         if (isNaN(a) || isNaN(p) || actual.trim() === '-' || actual.trim() === '') {
-             return { 
-                comparison: `Actual: ${actual}`, 
-                reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" 
-             };
+             return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
         }
 
         if (a > p) {
-            return {
-                comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`,
-                reaction: "📈 Forex සහ Crypto වෙළඳපොළ ඉහළට යා හැකියි (ධනාත්මක බලපෑම්)" 
-            };
+            return { comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`, reaction: "📈 Forex සහ Crypto වෙළඳපොළ ඉහළට යා හැකියි (ධනාත්මක බලපෑම්)" };
         } else if (a < p) {
-            return {
-                comparison: `පෙර දත්තවලට වඩා පහළයි (${actual})`,
-                reaction: "📉 Forex සහ Crypto වෙළඳපොළ පහළට යා හැකියි (ඍණාත්මක බලපෑම්)"
-            };
+            return { comparison: `පෙර දත්තවලට වඩා පහළයි (${actual})`, reaction: "📉 Forex සහ Crypto වෙළඳපොළ පහළට යා හැකියි (ඍණාත්මක බලපෑම්)" };
         } else {
-            return {
-                comparison: `පෙර දත්තවලට සමානයි (${actual})`,
-                reaction: "⚖ Forex සහ Crypto වෙළඳපොළ ස්ථාවරයෙහි පවතී"
-            };
+            return { comparison: `පෙර දත්තවලට සමානයි (${actual})`, reaction: "⚖ Forex සහ Crypto වෙළඳපොළ ස්ථාවරයෙහි පවතී" };
         }
     } catch (error) {
-        return { 
-            comparison: `Actual: ${actual}`, 
-            reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" 
-        };
+        return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
     }
 }
 
-/**
- * Scrapes the Forex Factory calendar for the latest released economic event.
- */
 async function getLatestEconomicEvent() {
     const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
-    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status} on calendar page. Scraping might be blocked.`);
+    if (!resp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${resp.status} on calendar page.`);
 
     const html = await resp.text();
     const $ = load(html);
@@ -203,10 +192,9 @@ async function getLatestEconomicEvent() {
         const previous = previous_td.text().trim() || "0";
         
         if (!actual || actual === "-") {
-            continue; // Only process events that have a realized actual value
+            continue; 
         }
         
-        // Robust Impact Extraction
         let impactText = "Unknown";
         const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first(); 
 
@@ -235,13 +223,9 @@ async function getLatestEconomicEvent() {
             impact: impactText 
         };
     }
-    
     return null;
 }
 
-/**
- * Handles fetching, processing, and sending the economic calendar event.
- */
 async function fetchEconomicNews(env) {
     try {
         const event = await getLatestEconomicEvent();
@@ -250,17 +234,15 @@ async function fetchEconomicNews(env) {
         const lastEventId = await readKV(env, LAST_ECONOMIC_EVENT_ID_KEY);
 
         if (event.id === lastEventId) {
-            console.info(`Economic: No new realized event. Last ID: ${event.id}`);
-            return; // EXIT - Prevents duplication
+            console.info(`[Economic Check] No new realized event. Last ID: ${event.id}`);
+            return;
         }
 
-        // --- ONLY PROCEED IF THE EVENT IS NEWLY REALIZED ---
         await writeKV(env, LAST_ECONOMIC_EVENT_ID_KEY, event.id);
 
         const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
         const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
 
-        // Final Sinhala message (HTML format)
         const message = 
             `<b>🚨 Economic Calendar Release 🔔</b>\n\n` +
             `⏰ <b>Date & Time:</b> ${date_time}\n\n` +
@@ -272,15 +254,12 @@ async function fetchEconomicNews(env) {
             `<b>📈 Market Reaction Forecast:</b> ${reaction}\n\n` +
             `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
 
-        // Save the FULL message to KV for the command response (/economic)
         await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, message);
-
-        // Sending the economic message to the main channel
         await sendRawTelegramMessage(CHAT_ID, message);
-        console.log(`Economic: Sent new event ID: ${event.id}`);
+        console.log(`[Economic Success] Sent new event ID: ${event.id}`);
         
     } catch (error) {
-        console.error("An error occurred during ECONOMIC task:", error);
+        console.error("[ECONOMIC ERROR] An error occurred during ECONOMIC task:", error);
     }
 }
 
@@ -291,43 +270,42 @@ async function fetchEconomicNews(env) {
 
 async function getLatestForexNews() {
     const resp = await fetch(FF_NEWS_URL, { headers: HEADERS });
-    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status} on news page.`);
+    if (!resp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${resp.status} on news page.`);
 
     const html = await resp.text();
     const $ = load(html);
-    // Select the first news link that is not a 'hit' (usually the main headline)
     const newsLinkTag = $('a[href^="/news/"]').not('a[href$="/hit"]').first(); 
 
-    if (newsLinkTag.length === 0) return null;
+    if (newsLinkTag.length === 0) {
+        console.warn("[SCRAPING WARNING] No news headline found on news page.");
+        return null;
+    }
 
     const headline = newsLinkTag.text().trim();
     const newsUrl = "https://www.forexfactory.com" + newsLinkTag.attr('href');
     
-    // Fetch detail page
     const newsResp = await fetch(newsUrl, { headers: HEADERS });
-    if (!newsResp.ok) throw new Error(`HTTP error! status: ${newsResp.status} on detail page`);
+    if (!newsResp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${newsResp.status} on detail page`);
 
     const newsHtml = await newsResp.text();
     const $detail = load(newsHtml);
     
-    // Find the image URL (Forex Factory uses image links in news)
     let imgUrl = $detail('img.attach').attr('src'); 
     const description = $detail('p.news__copy').text().trim() || "No description found.";
 
-    // 🚨 CRITICAL FIX: Ensure the image URL is absolute for Telegram
+    // CRITICAL FIX: Ensure the image URL is absolute
     if (imgUrl) {
         if (imgUrl.startsWith('/')) {
-            // Prepend the domain name if it's a relative URL
             imgUrl = "https://www.forexfactory.com" + imgUrl;
         }
-        // If the URL is still invalid (e.g., just 'null' or a broken link), set it to null 
-        // to force sendRawTelegramMessage to use sendMessage (text-only).
         if (!imgUrl.startsWith('http')) {
              imgUrl = null;
         }
     } else {
         imgUrl = null;
     }
+    
+    console.log(`[Fundamental Scraping] Scraped Headline: ${headline}. Scraped Image URL: ${imgUrl || 'N/A'}`);
 
     return { headline, newsUrl, imgUrl, description };
 }
@@ -340,10 +318,12 @@ async function fetchForexNews(env) {
         const lastHeadline = await readKV(env, LAST_HEADLINE_KEY);
         const currentHeadline = news.headline;
         const cleanLastHeadline = lastHeadline ? lastHeadline.trim() : null; 
+        
+        console.log(`[Fundamental Check] Current Headline: "${currentHeadline}". Last Saved: "${cleanLastHeadline}"`);
 
         if (currentHeadline === cleanLastHeadline) {
-            console.info(`Forex: No new headline. Last: ${currentHeadline}`);
-            return; // EXIT - Prevents duplication
+            console.info(`[Fundamental Check] No new headline. Exiting.`);
+            return;
         }
         
         await writeKV(env, LAST_HEADLINE_KEY, currentHeadline);
@@ -360,15 +340,15 @@ async function fetchForexNews(env) {
 
         // Save the FULL message and image URL to KV for the command response
         await writeKV(env, LAST_FULL_MESSAGE_KEY, message);
-        // Save the Absolute URL (or empty string if null)
         await writeKV(env, LAST_IMAGE_URL_KEY, news.imgUrl || ''); 
         
-        // Sending the news message to the main channel
-        // If news.imgUrl is a valid Absolute URL, it sends a photo; otherwise, it sends text only.
+        console.log(`[Fundamental Send] Final Image URL: ${news.imgUrl || 'N/A'}`);
+        
+        // Sending the news message to the main channel (includes robust fallback)
         await sendRawTelegramMessage(CHAT_ID, message, news.imgUrl);
-        console.log(`Fundamental News sent: ${news.headline}`);
+        console.log(`[Fundamental Success] News processing complete for: ${news.headline}`);
     } catch (error) {
-        console.error("An error occurred during FUNDAMENTAL task (SEND FAILED):", error);
+        console.error("[FUNDAMENTAL ERROR] An error occurred during FUNDAMENTAL task:", error);
     }
 }
 
@@ -378,11 +358,10 @@ async function fetchForexNews(env) {
 // =================================================================
 
 async function handleScheduledTasks(env) {
-    // 1. ECONOMIC CALENDAR EVENTS (Checks for new realized events)
+    console.log("--- Scheduled Task Started ---");
     await fetchEconomicNews(env); 
-    
-    // 2. FUNDAMENTAL NEWS HEADLINES (Checks for new headlines)
     await fetchForexNews(env);
+    console.log("--- Scheduled Task Finished ---");
 }
 
 export default {
@@ -402,18 +381,18 @@ export default {
         // Manual trigger
         if (url.pathname === '/trigger') {
             await handleScheduledTasks(env);
-            return new Response("Scheduled task (All News) manually triggered. Check your Telegram channel for the news (if new).", { status: 200 });
+            return new Response("Scheduled task (All News) manually triggered. Check your Telegram channel and Worker Logs.", { status: 200 });
         }
         
         // Status check
         if (url.pathname === '/status') {
             const lastForex = await readKV(env, LAST_HEADLINE_KEY);
-            const lastEconomic = await readKV(env, LAST_ECONOMIC_EVENT_ID_KEY); // Reading the new key
+            const lastEconomic = await readKV(env, LAST_ECONOMIC_EVENT_ID_KEY); 
             
             return new Response(
                 `Forex Bot Worker is active.\n` + 
                 `Last Fundamental Headline: ${lastForex || 'N/A'}\n` +
-                `Last Economic Event ID: ${lastEconomic || 'N/A'}`, // Showing both status keys
+                `Last Economic Event ID: ${lastEconomic || 'N/A'}`, 
                 { status: 200 }
             );
         }
@@ -424,16 +403,13 @@ export default {
                 const update = await request.json();
                 if (update.message && update.message.chat) {
                     const chatId = update.message.chat.id;
-                    
                     const messageText = update.message.text || "";
                     const command = messageText.trim().toLowerCase(); 
                     
                     let replyText = "";
 
-                    // Handle Commands
                     switch (command) {
                         case '/start':
-                            // Updated /start message to reflect both news types
                             replyText = 
                                 `<b>👋 Hello There !</b>\n\n` +
                                 `💁‍♂️ මේ BOT ගෙන් පුළුවන් ඔයාට <b>Fundamental News</b> සහ <b>Economic News</b> දෙකම සිංහලෙන් දැන ගන්න. News Update වෙද්දීම <b>C F NEWS MAIN CHANNEL</b> එකට යවනවා.\n\n` +
@@ -449,23 +425,26 @@ export default {
                             break;
 
                         case '/fundamental':
-                        case '/economic':
-                            // Command එක අනුව KV key තෝරා ගැනීම
-                            const messageKey = (command === '/fundamental') ? LAST_FULL_MESSAGE_KEY : LAST_ECONOMIC_MESSAGE_KEY;
+                            const fundamentalMessage = await readKV(env, LAST_FULL_MESSAGE_KEY);
+                            const fundamentalImageUrl = await readKV(env, LAST_IMAGE_URL_KEY);
                             
-                            // Image URL ඇත්තේ Fundamental News වල පමණයි
-                            const lastImageUrl = (command === '/fundamental') ? await readKV(env, LAST_IMAGE_URL_KEY) : null; 
-                            
-                            // Read the full formatted message saved in KV 
-                            const lastFullMessage = await readKV(env, messageKey);
-                            
-                            if (lastFullMessage) {
-                                // Send the KV content directly. Use the image URL if it's a fundamental command.
-                                await sendRawTelegramMessage(chatId, lastFullMessage, lastImageUrl); 
+                            console.log(`[Command /fundamental] Sending message. Image URL: ${fundamentalImageUrl || 'N/A'}`);
+
+                            if (fundamentalMessage) {
+                                // Use the robust send function for the command as well
+                                await sendRawTelegramMessage(chatId, fundamentalMessage, fundamentalImageUrl); 
                             } else {
-                                replyText = (command === '/fundamental') 
-                                    ? "Sorry, no recent fundamental news has been processed yet. Please wait for the next update or try the /trigger endpoint."
-                                    : "Sorry, no recent economic event has been processed yet. Please wait for the next update or try the /trigger endpoint.";
+                                replyText = "Sorry, no recent fundamental news has been processed yet. Please wait for the next update.";
+                                await sendRawTelegramMessage(chatId, replyText);
+                            }
+                            break;
+
+                        case '/economic':
+                            const economicMessage = await readKV(env, LAST_ECONOMIC_MESSAGE_KEY);
+                            if (economicMessage) {
+                                await sendRawTelegramMessage(chatId, economicMessage); 
+                            } else {
+                                replyText = "Sorry, no recent economic event has been processed yet. Please wait for the next update.";
                                 await sendRawTelegramMessage(chatId, replyText);
                             }
                             break;
@@ -478,7 +457,7 @@ export default {
                 }
                 return new Response('OK', { status: 200 });
             } catch (e) {
-                console.error('Webhook error:', e);
+                console.error('[WEBHOOK ERROR] An error occurred while processing the command:', e);
                 return new Response('OK', { status: 200 });
             }
         }
