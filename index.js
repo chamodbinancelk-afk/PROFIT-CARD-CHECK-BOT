@@ -2,10 +2,10 @@
 import { load } from 'cheerio';
 import moment from 'moment-timezone';
 
-// --- CONFIGURATION ---
+// --- CONFIGURATION (අවශ්‍ය පරිදි වෙනස් කරන්න!) ---
 // 🚨 CRITICAL: ඔබගේ සැබෑ BOT TOKEN එක මෙහි ඇතුල් කරන්න! 🚨
 const TELEGRAM_TOKEN = '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A'; 
-// 🚨 CRITICAL: පණිවිඩ ලැබිය යුතු CHAT ID එක මෙහි ඇතුල් කරන්න! 🚨
+// 🚨 CRITICAL: පණිවිඩ ලැබිය යුතු CHAT ID එක මෙහි ඇතුල් කරන්න! (සාමාන්‍යයෙන් -100 න් ආරම්භ වේ) 🚨
 const CHAT_ID = '-1003111341307'; 
 
 // --- NEW CONSTANTS FOR MEMBERSHIP CHECK AND BUTTON (MUST BE SET!) ---
@@ -38,7 +38,7 @@ const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message';
 
 
 // =================================================================
-// --- UTILITY FUNCTIONS (UPDATED: Added replyMarkup AND replyToId) ---
+// --- UTILITY FUNCTIONS ---
 // =================================================================
 
 /**
@@ -71,7 +71,7 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
             apiMethod = 'sendMessage'; 
         }
         
-        // Add inline keyboard if provided (only for sendMessage, not sendPhoto caption)
+        // Add inline keyboard if provided (only for sendMessage)
         if (replyMarkup && apiMethod === 'sendMessage') {
             payload.reply_markup = replyMarkup;
         }
@@ -93,6 +93,7 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
             });
 
             if (response.status === 429) {
+                // Rate limit: exponential backoff
                 const delay = Math.pow(2, attempt) * 1000;
                 await new Promise(resolve => setTimeout(resolve, delay));
                 continue; 
@@ -100,7 +101,7 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
 
             if (!response.ok) {
                 const errorText = await response.text();
-                // If sendPhoto fails, try sending as sendMessage without the image/button
+                // If sendPhoto fails, try sending as sendMessage without the image
                 if (apiMethod === 'sendPhoto') {
                     currentImgUrl = null; 
                     apiMethod = 'sendMessage';
@@ -146,6 +147,7 @@ async function writeKV(env, key, value) {
 }
 
 async function translateText(text) {
+    // This uses an unofficial Google Translate endpoint, which might be unstable or break.
     const translationApiUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=si&dt=t&q=${encodeURIComponent(text)}`;
     try {
         const response = await fetch(translationApiUrl);
@@ -194,15 +196,17 @@ async function checkChannelMembership(userId) {
 
 
 // =================================================================
-// --- ECONOMIC CALENDAR LOGIC (UNCHANGED) ---
+// --- ECONOMIC CALENDAR LOGIC ---
 // =================================================================
 
 function analyzeComparison(actual, previous) {
     try {
+        // Function to clean and parse numerical values
         const cleanAndParse = (value) => parseFloat(value.replace(/%|,|K|M|B/g, '').trim() || '0');
         const a = cleanAndParse(actual);
         const p = cleanAndParse(previous);
 
+        // Check for non-numerical, missing, or holiday data
         if (isNaN(a) || isNaN(p) || actual.trim() === '-' || actual.trim() === '' || actual.toLowerCase().includes('holiday')) {
             return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
         }
@@ -215,6 +219,7 @@ function analyzeComparison(actual, previous) {
             return { comparison: `පෙර දත්තවලට සමානයි (${actual})`, reaction: "⚖ Forex සහ Crypto වෙළඳපොළ ස්ථාවරයෙහි පවතී" };
         }
     } catch (error) {
+        console.error("Error analyzing economic comparison:", error);
         return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
     }
 }
@@ -284,6 +289,7 @@ async function fetchEconomicNews(env) {
         let sentCount = 0;
         let lastSentMessage = ""; 
 
+        // Process events in chronological order (reverse the list)
         for (const event of events.reverse()) { 
             const eventKVKey = LAST_ECONOMIC_EVENT_ID_KEY + "_" + event.id; 
             const lastEventId = await readKV(env, eventKVKey);
@@ -316,6 +322,7 @@ async function fetchEconomicNews(env) {
         }
         
         if (sentCount > 0) {
+            // Only update the last message key if something was actually sent
             await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, lastSentMessage); 
             console.log(`[Economic Success] Found and sent ${sentCount} new events. Saved latest to KV.`);
         } else {
@@ -330,7 +337,7 @@ async function fetchEconomicNews(env) {
 
 
 // =================================================================
-// --- CORE FOREX NEWS LOGIC (Fundamental - UNCHANGED) ---
+// --- CORE FOREX NEWS LOGIC (Fundamental) ---
 // =================================================================
 
 async function getLatestForexNews() {
@@ -339,6 +346,7 @@ async function getLatestForexNews() {
 
     const html = await resp.text();
     const $ = load(html);
+    // Select the first news link that starts with /news/ and does not end with /hit
     const newsLinkTag = $('a[href^="/news/"]').not('a[href$="/hit"]').first();
 
     if (newsLinkTag.length === 0) return null;
@@ -352,12 +360,16 @@ async function getLatestForexNews() {
     const newsHtml = await newsResp.text();
     const $detail = load(newsHtml);
     
+    // Scrape image URL
     let imgUrl = $detail('img.attach').attr('src'); 
+    // Scrape main description copy
     const description = $detail('p.news__copy').text().trim() || "No description found.";
 
+    // Prepend base URL if image path is relative
     if (imgUrl && imgUrl.startsWith('/')) {
         imgUrl = "https://www.forexfactory.com" + imgUrl;
     } else if (!imgUrl || !imgUrl.startsWith('http')) {
+        // Clear if it's not a valid full URL
         imgUrl = null;
     }
     
@@ -380,6 +392,7 @@ async function fetchForexNews(env) {
         
         await writeKV(env, LAST_HEADLINE_KEY, currentHeadline);
 
+        // Translate the description before sending
         const description_si = await translateText(news.description);
         const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
         
@@ -392,6 +405,7 @@ async function fetchForexNews(env) {
         await writeKV(env, LAST_FULL_MESSAGE_KEY, message);
         await writeKV(env, LAST_IMAGE_URL_KEY, news.imgUrl || ''); 
 
+        // Send the message, using sendPhoto if imgUrl is available
         await sendRawTelegramMessage(CHAT_ID, message, news.imgUrl);
     } catch (error) {
         // ERROR 1101 වළක්වා ගැනීමට දෝෂය අල්ලා Cloudflare Logs වලට යවයි.
@@ -401,7 +415,7 @@ async function fetchForexNews(env) {
 
 
 // =================================================================
-// --- TELEGRAM WEBHOOK HANDLER (UPDATED: Added Reply Mechanism) ---
+// --- TELEGRAM WEBHOOK HANDLER ---
 // =================================================================
 
 async function handleTelegramUpdate(update, env) {
@@ -425,7 +439,7 @@ async function handleTelegramUpdate(update, env) {
             // 1. Create the denial message (HTML mode)
             const denialMessage = 
                 `⛔ <b>Access Denied</b> ⛔\n\n` +
-                `Hey There <a href="tg://user?id=${userId}">@${username}</a>,\n` +
+                `Hey There <a href="tg://user?id=${userId}">${username}</a>,\n` +
                 `You Must Join <b>${CHANNEL_LINK_TEXT}</b> Channel To Use This BOT.\n` +
                 `So, Please Join it & Try Again.👀 Thank You ✍️`;
             
@@ -443,7 +457,6 @@ async function handleTelegramUpdate(update, env) {
             await sendRawTelegramMessage(chatId, denialMessage, null, replyMarkup, messageId); 
             return; // STOP execution
         }
-        // If they ARE a member, execution continues...
     }
 
     // --- 2. COMMAND EXECUTION (Only if membership check passed or command is /start) ---
@@ -466,6 +479,7 @@ async function handleTelegramUpdate(update, env) {
         case '/fundamental':
         case '/economic':
             const messageKey = (command === '/fundamental') ? LAST_FULL_MESSAGE_KEY : LAST_ECONOMIC_MESSAGE_KEY;
+            // Image URL is only relevant for fundamental news
             const lastImageUrl = (command === '/fundamental') ? await readKV(env, LAST_IMAGE_URL_KEY) : null; 
             
             const lastFullMessage = await readKV(env, messageKey);
@@ -490,7 +504,7 @@ async function handleTelegramUpdate(update, env) {
 
 
 // =================================================================
-// --- CLOUDFLARE WORKER HANDLERS (UPDATED: Added Error Handling) ---
+// --- CLOUDFLARE WORKER HANDLERS ---
 // =================================================================
 
 async function handleScheduledTasks(env) {
@@ -514,7 +528,6 @@ export default {
                 } catch (error) {
                     // Log the critical error during the scheduled run.
                     console.error("[CRITICAL CRON FAILURE]: ", error.stack);
-                    // This log helps you diagnose the "Exceeded Resources" issue if it's a code loop.
                 }
             })()
         );
@@ -532,7 +545,10 @@ export default {
             if (url.pathname === '/trigger') {
                 const testMessage = `<b>✅ Economic Message Test Successful!</b>\n\nThis message confirms that:\n1. KV read/write is working.\n2. Telegram command logic is functional.\n\nNow try the <code>/economic</code> command in Telegram!`;
                 await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, testMessage);
+                
+                // Run the main scheduled tasks to fetch actual data
                 await handleScheduledTasks(env);
+                
                 return new Response("Scheduled task (All News) manually triggered and KV Test Message saved. Check your Telegram channel and Worker Logs.", { status: 200 });
             }
             
