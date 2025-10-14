@@ -8,12 +8,11 @@ import moment from 'moment-timezone';
 // =================================================================
 
 const HARDCODED_CONFIG = {
-    // ⚠️ මේවා ඔබේ සත්‍ය දත්ත මගින් ප්‍රතිස්ථාපනය කරන්න
+    // ⚠️ මේවා ඔබේ සත්‍ය දත්ත මගින් ප්‍රතිස්ථාපනය කරන්න.
+    // Cloudflare Secrets වලින් මේවා ඉවත් කර ඇති බවට වග බලා ගන්න.
     TELEGRAM_TOKEN: '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A',       
     CHAT_ID: '-1003111341307',                 
     GEMINI_API_KEY: 'AIzaSyAb4dX3HiUb22JnN21_zXzKchngxeueICo',           
-    
-    // NOTE: KV Binding එකේ නම (NEWS_STATE) දැන් env වස්තුව හරහා කෙලින්ම කියවනු ලැබේ.
 };
 
 // --- NEW CONSTANTS FOR MEMBERSHIP CHECK AND BUTTON (MUST BE SET!) ---
@@ -136,6 +135,7 @@ async function readKV(env, key) {
             console.error("KV Binding 'NEWS_STATE' is missing in ENV.");
             return null;
         }
+        // env.NEWS_STATE is the KV Namespace binding
         const value = await env.NEWS_STATE.get(key); 
         if (value === null || value === undefined) {
             return null;
@@ -157,6 +157,7 @@ async function writeKV(env, key, value) {
             console.error("KV Binding 'NEWS_STATE' is missing in ENV. Write failed.");
             return;
         }
+        // env.NEWS_STATE is the KV Namespace binding
         // Setting TTL for event IDs for cleanup (30 days)
         const expirationTtl = key.startsWith(LAST_ECONOMIC_EVENT_ID_KEY) ? 2592000 : undefined;
         await env.NEWS_STATE.put(key, String(value), { expirationTtl });
@@ -399,6 +400,7 @@ async function fetchEconomicNews(env) {
         let sentCount = 0;
         let lastSentMessage = ""; 
 
+        // Reverse the array to process older events first and ensure the latest is sent last
         for (const event of events.reverse()) { 
             const eventKVKey = LAST_ECONOMIC_EVENT_ID_KEY + "_" + event.id; 
             const lastEventId = await readKV(env, eventKVKey);
@@ -675,6 +677,7 @@ export default {
                 
                 const statusMessage = 
                     `Forex Bot Worker is active.\n` + 
+                    // KV Binding එකේ තත්ත්වය පරීක්ෂා කිරීම
                     `KV Binding Check: ${env.NEWS_STATE ? 'OK (Bound)' : 'FAIL (Missing Binding)'}\n` +
                     `Last Fundamental Headline: ${lastForex || 'N/A'}\n` +
                     `Last Economic Message (Preview): ${lastEconomicPreview ? lastEconomicPreview.substring(0, 100).replace(/(\r\n|\n|\r)/gm, " ") + '...' : 'N/A'}`;
