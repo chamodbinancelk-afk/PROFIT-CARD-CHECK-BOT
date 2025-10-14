@@ -1,10 +1,4 @@
 // --- ES MODULE IMPORTS ---
-// IMPORTANT: Use dynamic imports for cheerio/moment-timezone to align with the Worker environment
-// Cloudflare Workers often require these to be imported this way or bundled correctly.
-
-// We will rely on the global/worker environment for fetch and the bundled libraries.
-// Since the environment is set to "module" in package.json, we must use import/export.
-
 import { load } from 'cheerio';
 import moment from 'moment-timezone';
 
@@ -34,8 +28,8 @@ const LAST_FULL_MESSAGE_KEY = 'last_full_news_message';
 const LAST_IMAGE_URL_KEY = 'last_image_url'; 
 
 // Economic Calendar Keys
-// Note: We use this prefix for per-event unique IDs (e.g., last_economic_event_id_12345)
 const LAST_ECONOMIC_EVENT_ID_KEY = 'last_economic_event_id'; 
+// This key will now ONLY store the LATEST message that was ACTUALLY SENT to the channel
 const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message'; 
 
 
@@ -88,12 +82,11 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null) {
                 const errorText = await response.text();
                 console.error(`[TELEGRAM ERROR] API Rejected (${apiMethod}, Attempt ${attempt + 1}): ${response.status} - ${errorText}`);
                 
-                // CRITICAL FALLBACK LOGIC: If sendPhoto fails, switch to sendMessage (text-only) and retry.
                 if (apiMethod === 'sendPhoto') {
                     console.warn("[TELEGRAM FALLBACK] sendPhoto failed. Retrying immediately as sendMessage (text-only).");
                     currentImgUrl = null; 
                     apiMethod = 'sendMessage';
-                    attempt = -1; // Next iteration will be attempt 0 for sendMessage
+                    attempt = -1; 
                     continue; 
                 }
                 
@@ -134,7 +127,6 @@ async function writeKV(env, key, value) {
  * Translation Function
  */
 async function translateText(text) {
-    // This uses the unofficial Google Translate API endpoint, which is compatible with Workers.
     const translationApiUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=si&dt=t&q=${encodeURIComponent(text)}`;
     try {
         const response = await fetch(translationApiUrl);
@@ -176,9 +168,7 @@ function analyzeComparison(actual, previous) {
 }
 
 /**
- * Scrapes the Forex Factory calendar for ALL released economic events
- * (those with an Actual value) and returns them as an array.
- * This function ensures all events that have been realized are checked.
+ * Scrapes the Forex Factory calendar for ALL released economic events.
  */
 async function getLatestEconomicEvents() {
     const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
@@ -190,14 +180,12 @@ async function getLatestEconomicEvents() {
 
     const realizedEvents = [];
     
-    // Iterate through all rows (starting from the oldest realized event in the current view)
     for (let i = 0; i < rows.length; i++) {
         const row = $(rows[i]);
         const eventId = row.attr("data-event-id");
 
         const actual = row.find(".calendar__actual").text().trim();
         
-        // 1. Only consider events that have an Actual value and a valid ID
         if (actual && actual !== "-" && eventId) {
             
              const currency_td = row.find(".calendar__currency");
@@ -206,7 +194,6 @@ async function getLatestEconomicEvents() {
              const impact_td = row.find('.calendar__impact');
              const time_td = row.find('.calendar__time'); 
              
-             // Robust Impact Extraction
              let impactText = "Unknown";
              const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first(); 
              
@@ -254,24 +241,17 @@ async function fetchEconomicNews(env) {
         }
 
         let sentCount = 0;
-        let finalMessage = "";
+        // finalMessage will ONLY be updated with a message that was ACTUALLY SENT
+        let finalMessage = await readKV(env, LAST_ECONOMIC_MESSAGE_KEY) || "";
 
         // Process each realized event
         for (const event of events) {
-            // Create a unique KV key for each specific event using its ID
             const eventKVKey = LAST_ECONOMIC_EVENT_ID_KEY + "_" + event.id; 
             const lastEventId = await readKV(env, eventKVKey);
             
-            // If the event ID is already saved, it means we have processed and sent it.
+            // --- CHECK IF ALREADY SENT ---
             if (event.id === lastEventId) {
-                // If it's not new, we still update the finalMessage so the command always gets the latest event.
-                 const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
-                 finalMessage = `<b>🚨 Economic Calendar Release 🔔</b>\n\n` +
-                                `⏰ <b>Time:</b> ${event.time} | <b>Currency:</b> ${event.currency}\n` +
-                                `📌 <b>Headline:</b> ${event.title}\n` +
-                                `📈 <b>Actual:</b> ${event.actual} | <b>Previous:</b> ${event.previous}\n` +
-                                `⚙️ (Processed previously)`;
-                continue; 
+                continue; // Skip this event, it was already processed and sent to the channel
             }
             
             // --- PROCESS AND SEND IF THE EVENT IS NEWLY REALIZED ---
@@ -296,15 +276,17 @@ async function fetchEconomicNews(env) {
             // Send the individual message immediately
             await sendRawTelegramMessage(CHAT_ID, message);
             
-            // Update the message for the /economic command
+            // Update the message for the /economic command only if it was successfully sent
             finalMessage = message; 
             sentCount++;
         }
         
-        if (finalMessage) {
-            // Save the message of the last processed event (new or old) to the main KV key for the /economic command response
+        if (sentCount > 0) {
+            // Only save the message if NEW news was sent (finalMessage holds the newest sent message)
             await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, finalMessage); 
-            console.log(`[Economic Success] Found and sent ${sentCount} new events. Total events realized: ${events.length}.`);
+            console.log(`[Economic Success] Found and sent ${sentCount} new events.`);
+        } else {
+             console.log(`[Economic Success] No new events found to send.`);
         }
 
     } catch (error) {
@@ -342,7 +324,6 @@ async function getLatestForexNews() {
     let imgUrl = $detail('img.attach').attr('src'); 
     const description = $detail('p.news__copy').text().trim() || "No description found.";
 
-    // CRITICAL FIX: Ensure the image URL is absolute
     if (imgUrl) {
         if (imgUrl.startsWith('/')) {
             imgUrl = "https://www.forexfactory.com" + imgUrl;
@@ -415,7 +396,6 @@ async function handleScheduledTasks(env) {
 
 /**
  * The default export for the Cloudflare Worker using ES Module syntax.
- * This MUST be used if package.json specifies "type": "module".
  */
 export default {
     /**
@@ -484,7 +464,6 @@ export default {
                             console.log(`[Command /fundamental] Sending message. Image URL: ${fundamentalImageUrl || 'N/A'}`);
 
                             if (fundamentalMessage) {
-                                // Use the robust send function for the command as well
                                 await sendRawTelegramMessage(chatId, fundamentalMessage, fundamentalImageUrl); 
                             } else {
                                 replyText = "Sorry, no recent fundamental news has been processed yet. Please wait for the next update.";
