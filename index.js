@@ -166,19 +166,70 @@ async function writeKV(env, key, value) {
     }
 }
 
-async function translateText(text) {
-    const translationApiUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=si&dt=t&q=${encodeURIComponent(text)}`;
-    try {
-        const response = await fetch(translationApiUrl);
-        const data = await response.json();
-        if (data && data[0] && Array.isArray(data[0])) {
-            return data[0].map(item => item[0]).join('');
-        }
-        throw new Error("Invalid translation response structure.");
-    } catch (e) {
-        console.error('Translation API Error. Using original text.', e);
-        return `[Translation Failed: ${text}]`;
-    }
+
+/**
+ * Uses Gemini to translate English text into conversational Sinhala (කථන භාෂාව).
+ * @param {string} text - The English text to translate.
+ * @returns {Promise<string>} - The translated Sinhala text or a fallback message.
+ */
+async function translateTextWithGemini(text) {
+    const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
+    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
+    
+    if (!GEMINI_API_KEY) {
+        return `[පරිවර්තනය අසාර්ථක විය: API යතුර නැත]`;
+    }
+
+    const maxRetries = 3;
+    const initialDelay = 1000;
+
+    // System prompt for conversational Sinhala translation
+    const systemPrompt = "You are a highly skilled professional translator. Translate the following English news description into fluent, natural, and conversational Sinhala (කථන භාෂාව). The output must only be the translated text, without any labels, pre-text, or post-text, and should use simple, easy-to-understand language.";
+    
+    const userQuery = `Translate the following news description into conversational Sinhala: "${text}"`;
+
+    const payload = {
+        contents: [{ parts: [{ text: userQuery }] }],
+        systemInstruction: {
+            parts: [{ text: systemPrompt }]
+        },
+    };
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            const response = await fetch(GEMINI_API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.status === 429) {
+                const delay = initialDelay * Math.pow(2, attempt);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue;
+            }
+
+            if (!response.ok) {
+                throw new Error(`Gemini API call failed with status: ${response.status}`);
+            }
+
+            const result = await response.json();
+            const translatedText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+            
+            if (!translatedText || translatedText.trim() === '') {
+                throw new Error("Gemini response was empty.");
+            }
+            
+            return translatedText.trim();
+        } catch (error) {
+            console.error(`Gemini Translation attempt ${attempt + 1} failed:`, error.message);
+            if (attempt === maxRetries - 1) {
+                return `[AI පරිවර්තනය අසාර්ථක විය. මුල් පුවත: ${text.substring(0, 100)}...]`;
+            }
+            const delay = initialDelay * Math.pow(2, attempt);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
 }
 
 
@@ -227,7 +278,7 @@ async function getAISentimentSummary(headline, description) {
     // 1. Initial Key Check
     if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY_HERE') {
         console.error("Gemini AI: API Key is missing or placeholder. Skipping analysis.");
-        return "⚠️ ** විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ.**";
+        return "⚠️ **AI විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ (API Key නැත).**";
     }
 
     const maxRetries = 3;
@@ -280,7 +331,7 @@ Sinhala Summary: [Sinhala translation of the analysis (very brief, max 2 sentenc
             // Parsing the text response (Sinhala Summary and Sentiment)
             const lines = textResponse.split('\n');
             let sentiment = 'Neutral';
-            let summarySi = 'විශ්ලේෂණයක් සැපයීමට නොහැකි විය.';
+            let summarySi = 'AI විශ්ලේෂණයක් සැපයීමට නොහැකි විය.';
 
             lines.forEach(line => {
                 if (line.startsWith('Sentiment:')) {
@@ -319,7 +370,7 @@ async function getAIEconomicAnalysis(currency, title, actual, previous) {
     const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
     
     if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY_HERE') {
-        return "⚠️ ** විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ.**";
+        return "⚠️ **AI විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ (API Key නැත).**";
     }
 
     const maxRetries = 3;
@@ -371,7 +422,7 @@ Sinhala Summary: [Sinhala translation of the analysis (very brief, max 2 sentenc
             // Parsing the text response
             const lines = textResponse.split('\n');
             let sentiment = 'Neutral';
-            let summarySi = ' විශ්ලේෂණයක් සැපයීමට නොහැකි විය.';
+            let summarySi = 'AI විශ්ලේෂණයක් සැපයීමට නොහැකි විය.';
 
             lines.forEach(line => {
                 if (line.startsWith('Sentiment:')) {
@@ -387,13 +438,13 @@ Sinhala Summary: [Sinhala translation of the analysis (very brief, max 2 sentenc
             else if (sentiment.toLowerCase().includes('bearish')) sentimentEmoji = '🔴 Bearish 🐻';
             else sentimentEmoji = '🟡 Neutral ⚖️';
 
-            return `\n\n✨ <b> Economic Analysis</b> ✨\n\n` +
+            return `\n\n✨ <b> AI Economic Analysis</b> ✨\n\n` +
                    `<b>📈 Reaction:</b> ${sentimentEmoji}\n\n` +
                    `<b>📝 සාරාංශය:</b> ${summarySi}`;
         } catch (error) {
             console.error(`Gemini Economic API attempt ${attempt + 1} failed:`, error.message);
             if (attempt === maxRetries - 1) {
-                return "\n\n⚠️ <b> විශ්ලේෂණය ලබා ගැනීමට නොහැකි විය.</b>";
+                return "\n\n⚠️ <b> AI විශ්ලේෂණය ලබා ගැනීමට නොහැකි විය.</b>";
             }
             const delay = initialDelay * Math.pow(2, attempt);
             await new Promise(resolve => setTimeout(resolve, delay));
@@ -405,6 +456,29 @@ Sinhala Summary: [Sinhala translation of the analysis (very brief, max 2 sentenc
 // =================================================================
 // --- ECONOMIC CALENDAR LOGIC (ආර්ථික දින දර්ශන තර්කය) ---
 // =================================================================
+
+function analyzeComparison(actual, previous) {
+    try {
+        const cleanAndParse = (value) => parseFloat(value.replace(/%|,|K|M|B/g, '').trim() || '0');
+        const a = cleanAndParse(actual);
+        const p = cleanAndParse(previous);
+
+        if (isNaN(a) || isNaN(p) || actual.trim() === '-' || actual.trim() === '' || actual.toLowerCase().includes('holiday')) {
+            return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
+        }
+
+        if (a > p) {
+            return { comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`, reaction: "📈 Forex සහ Crypto වෙළඳපොළ ඉහළට යා හැකියි (ධනාත්මක බලපෑම්)" };
+        } else if (a < p) {
+            return { comparison: `පෙර දත්තවලට වඩා පහළයි (${actual})`, reaction: "📉 Forex සහ Crypto වෙළඳපොළ පහළට යා හැකියි (ඍණාත්මක බලපෑම්)" };
+        } else {
+            return { comparison: `පෙර දත්තවලට සමානයි (${actual})`, reaction: "⚖ Forex සහ Crypto වෙළඳපොළ ස්ථාවරයෙහි පවතී" };
+        }
+    } catch (error) {
+        console.error("Error analyzing economic comparison:", error);
+        return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
+    }
+}
 
 async function getLatestEconomicEvents() {
     const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
@@ -479,26 +553,27 @@ async function fetchEconomicNews(env) {
             
             await writeKV(env, eventKVKey, event.id);
 
+            const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
             const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
 
-            // --- NEW: Get AI Economic Analysis ---
+            // --- Get AI Economic Analysis ---
             const aiEconomicSummary = await getAIEconomicAnalysis(
                 event.currency,
                 event.title,
                 event.actual,
-                event.previous,
-                event.impact
+                event.previous
             );
-            // --- END NEW ---
+            // --- END AI ---
 
             const message = 
                 `<b>🚨 Economic Calendar Release 🔔</b>\n\n` +
-                `⏰ <b>Date & Time:</b> ${date_time}\n\n` +
-                `🌍 <b>Currency:</b> ${event.currency}\n\n` +
+                `⏰ <b>Date & Time:</b> ${date_time}\n` +
+                `🌍 <b>Currency:</b> ${event.currency}\n` +
                 `📌 <b>Headline:</b> ${event.title}\n\n` +
                 `📈 <b>Actual:</b> ${event.actual}\n` +
                 `📉 <b>Previous:</b> ${event.previous}\n\n` +
-                `📈 <b>impact:</b> ${event.impact}\n\n` +
+                `🔍 <b>Details:</b> ${comparison}\n\n` +
+                `<b>📈 Local Reaction:</b> ${reaction}\n\n` +
                 
                 // AI Summary එක මෙතනට ඇතුළු වේ
                 `${aiEconomicSummary}\n\n` + 
@@ -582,12 +657,13 @@ async function fetchForexNews(env) {
 
         const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
 
-        // --- STEP 1: Handle Missing Description and Translate ---
+        // --- STEP 1: Handle Missing Description and Translate using GEMINI for Conversational Sinhala ---
         let description_si;
         if (news.description === FALLBACK_DESCRIPTION_EN) {
             description_si = "විස්තරයක් හමු නොවීය.";
         } else {
-            description_si = await translateText(news.description);
+            // 🚨 NEW: Use Gemini for conversational translation 
+            description_si = await translateTextWithGemini(news.description);
         }
         
         // --- STEP 2: Get AI Sentiment Summary (Fundamental) ---
