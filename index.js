@@ -12,7 +12,7 @@ const HARDCODED_CONFIG = {
     // Cloudflare Secrets වලින් මේවා ඉවත් කර ඇති බවට වග බලා ගන්න.
     TELEGRAM_TOKEN: 'YOUR_TELEGRAM_BOT_TOKEN_HERE', // 👈 ඔබේ Bot Token එක දමන්න!       
     CHAT_ID: 'YOUR_TELEGRAM_CHAT_ID_HERE',           // 👈 ඔබේ Channel Chat ID එක දමන්න!
-    GEMINI_API_KEY: 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU', // 🔑 මෙම යතුර දැන් භාවිතා නොවේ, නමුත් අනාගතය සඳහා තබා ඇත.           
+    OPENAI_API_KEY: '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', // 🔑 මෙම යතුර දැන් භාවිතා නොවේ, නමුත් අනාගතය සඳහා තබා ඇත.           
 };
 
 // --- NEW CONSTANTS FOR MEMBERSHIP CHECK AND BUTTON (MUST BE SET!) ---
@@ -221,67 +221,85 @@ async function checkChannelMembership(userId) {
  * [KEYWORD VERSION] Analyzes the headline for a simple sentiment based on common Forex keywords.
  * This method completely avoids the Gemini API to bypass Geo-blocking/Key errors.
  */
-async function getAISentimentSummary(headline, description) {
-    const lowerHeadline = headline.toLowerCase();
-    
-    // ==========================================================
-    // --- 1. Bearish Keywords (USD ශක්තිමත් => වෙළඳපොළ පහළට) ---
-    // ==========================================================
-    const bearishKeywords = [
-        'rate hike', 'tightening', 'inflation worry', 'strong dollar', 'strong jobs', 
-        'tapering', 'hawkish', 'above consensus', 'higher than expected', 
-        'fed rate hike', 'yields jump', 'better than expected', 'beats expectations', 
-        'nonfarm payrolls surge', 'cpi rise', 'ppi increase', 'solid growth', 
-        'rising rates', 'deficit widens', 'supply shortage', 'fewer jobless claims',
-        'better-than-expected', 'more than expected', 'strong economic data', 'tighter monetary policy'
-    ];
+// --- HARDCODED_CONFIG වෙත එක් කළ යුතු යතුර: ---
+// const HARDCODED_CONFIG = {
+//     // ... අනෙකුත් Keys
+//     OPENAI_API_KEY: 'YOUR_OPENAI_API_KEY_HERE', // 👈 නව යතුර
+// };
 
-    // ==========================================================
-    // --- 2. Bullish Keywords (USD දුර්වල => වෙළඳපොළ ඉහළට) ---
-    // ==========================================================
-    const bullishKeywords = [
-        'rate cut', 'easing', 'weak dollar', 'weak jobs', 'lowering rates', 
-        'recession risk', 'below consensus', 'lower than expected', 
-        'dovish', 'fed pause', 'jobless claims rise', 'misses expectations', 
-        'worse than expected', 'cpi drop', 'gdp decline', 'slowdown', 
-        'quantitative easing', 'liquidity injection', 'stimulus package', 'weak manufacturing',
-        'fewer hirings', 'less than expected', 'poor economic data', 'looser monetary policy'
-    ];
+/**
+ * [CHATGPT VERSION] Uses the OpenAI Chat Completion API to get sentiment analysis.
+ */
+async function getAISentimentSummary_ChatGPT(headline, description) {
+    const OPENAI_API_KEY = HARDCODED_CONFIG.OPENAI_API_KEY;
 
-    let sentiment = 'Neutral';
-    let explanation = 'මූලික ආර්ථික විශ්ලේෂණයට අනුව, සිරස්තලයේ පැහැදිලි Bullish හෝ Bearish ප්‍රධාන වචන හමු නොවීය.';
-    let summarySi;
+    if (!OPENAI_API_KEY || OPENAI_API_KEY.includes('YOUR_OPENAI_API_KEY_HERE')) {
+        return `\n\n✨ <b>AI විශ්ලේෂණ දෝෂය</b> ✨\n` +
+               `ℹ️ <i>OpenAI Key එක සකසා නැත.</i>`;
+    }
 
+    const prompt = 
+        `You are a Forex and Crypto market analyst. Analyze the following news headline and description. 
+         Determine the overall market sentiment (Bullish, Bearish, or Neutral) and provide a very short, 
+         clear explanation in SINHALA language. Do not use English words in the final explanation.
+         
+         Headline: "${headline}"
+         Description: "${description}"
+         
+         Format the output STRICTLY as:
+         Sentiment: [Bullish/Bearish/Neutral]
+         Explanation: [Sinhala explanation here]`;
+         
     try {
-        summarySi = await translateText(headline);
-    } catch (e) {
-        summarySi = "සිරස්තලය පරිවර්තනය කිරීමට නොහැකි විය.";
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${OPENAI_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: "gpt-3.5-turbo", // Cost-effective model
+                messages: [{ role: "user", content: prompt }],
+                max_tokens: 200,
+                temperature: 0.2,
+            })
+        });
+
+        if (!response.ok) {
+            const errorBody = await response.json();
+            throw new Error(`OpenAI API Error: ${response.status} - ${errorBody.error?.message || response.statusText}`);
+        }
+
+        const data = await response.json();
+        const rawText = data.choices[0]?.message?.content || "";
+        
+        // --- Parse the Raw Text ---
+        const sentimentMatch = rawText.match(/Sentiment:\s*(Bullish|Bearish|Neutral)/i);
+        const explanationMatch = rawText.match(/Explanation:\s*(.*)/is);
+
+        let sentiment = sentimentMatch ? sentimentMatch[1].trim() : 'Neutral';
+        let explanation = explanationMatch ? explanationMatch[1].trim() : 'AI විශ්ලේෂණ ප්‍රතිචාරය හඳුනා ගැනීමට නොහැකි විය.';
+        
+        let sentimentEmoji = '🟡 Neutral ⚖️';
+        if (sentiment.toLowerCase().includes('bullish')) sentimentEmoji = '🟢 Bullish 🐂';
+        else if (sentiment.toLowerCase().includes('bearish')) sentimentEmoji = '🔴 Bearish 🐻';
+
+        return `\n\n✨ <b>AI වෙළඳපොළ විශ්ලේෂණය (ChatGPT)</b> ✨\n` +
+               `<b>📈 බලපෑම:</b> ${sentimentEmoji}\n` +
+               `<b>📝 සාරාංශය:</b> ${explanation}\n`;
+               
+    } catch (error) {
+        console.error("ChatGPT Integration Error:", error);
+        // Fallback to the translation of the headline if AI fails
+        const headlineSi = await translateText(headline);
+        return `\n\n✨ <b>AI විශ්ලේෂණ දෝෂය</b> ✨\n` +
+               `<b>📈 බලපෑම:</b> 🟡 Neutral ⚖️\n` +
+               `<b>📝 සාරාංශය:</b> සේවාව අසාර්ථක විය (API Error/Billing). Headline: ${headlineSi}\n`;
     }
-
-    // Bullish සහ Bearish දෙකම තිබේදැයි පරීක්ෂා කිරීම (උදා: 'Strong Jobs but Rate Cut expected')
-    const isBearish = bearishKeywords.some(keyword => lowerHeadline.includes(keyword));
-    const isBullish = bullishKeywords.some(keyword => lowerHeadline.includes(keyword));
-
-    if (isBearish && isBullish) {
-        sentiment = 'Neutral';
-        explanation = 'ප්‍රතිවිරුද්ධ ප්‍රධාන වචන දෙකම හමු වූ බැවින්, වෙළඳපොළට මිශ්‍ර (Mixed) බලපෑමක් අපේක්ෂා කෙරේ.';
-    } else if (isBearish) {
-        sentiment = 'Bearish';
-        explanation = '📈 මූලික විශ්ලේෂණයට අනුව, මෙම පුවත ඩොලරය ශක්තිමත් කරන (Bearish) ප්‍රධාන වචන අඩංගු වේ.';
-    } else if (isBullish) {
-        sentiment = 'Bullish';
-        explanation = '📈 මූලික විශ්ලේෂණයට අනුව, මෙම පුවත ඩොලරය දුර්වල කරන (Bullish) ප්‍රධාන වචන අඩංගු වේ.';
-    }
-
-    let sentimentEmoji = '🟡 Neutral ⚖️';
-    if (sentiment === 'Bullish') sentimentEmoji = '🟢 Bullish 🐂';
-    else if (sentiment === 'Bearish') sentimentEmoji = '🔴 Bearish 🐻';
-
-    return `\n\n✨ <b>වෙළඳපොළ විශ්ලේෂණය (Keyword)</b> ✨\n\n` +
-        `<b>📈 බලපෑම:</b> ${sentimentEmoji}\n\n` +
-        `<b>📝 සාරාංශය:</b> ${explanation}\n` +
-        `<b> headline:</b> ${summarySi}`;
 }
+
+// ⚠️ ඔබ දැන් භාවිතා කරන getAISentimentSummary ශ්‍රිතය ඉවත් කර, 
+// ඉහත කේතය යොදන්නේ නම්, එහි නම getAISentimentSummary ලෙස වෙනස් කරන්න.
 
 
 // =================================================================
