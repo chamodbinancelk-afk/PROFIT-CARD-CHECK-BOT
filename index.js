@@ -221,10 +221,25 @@ async function checkChannelMembership(userId) {
  * Uses Gemini to generate a short Sinhala summary and sentiment analysis for the news,
  * based on the inverse relationship between the USD and other markets.
  */
+// =================================================================
+// --- GEMINI AI INTEGRATION (FIXED: Removed google_search tool) ---
+// =================================================================
+
+/**
+ * Uses Gemini to generate a short Sinhala summary and sentiment analysis for the news,
+ * based on the inverse relationship between the USD and other markets.
+ */
 async function getAISentimentSummary(headline, description) {
-    const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
-    // Note: Using gemini-1.5-flash-latest for best performance/cost balance
-    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
+    const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
+    
+    // 🔴 මෙම පේළිය වෙනස් කරන්න:
+    // const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
+    
+    // 🟢 නිවැරදි සහ වඩා ස්ථාවර URL එක මෙසේ යොදන්න:
+    const MODEL_NAME = 'gemini-1.5-flash'; // 'latest' ඉවත් කර ඇත
+    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1/models/${MODEL_NAME}:generateContent?key=${GEMINI_API_KEY}`;
+    
+    // ... කේතයේ අනෙක් කොටස් එලෙසම පවතී ...
 
     if (!GEMINI_API_KEY || GEMINI_API_KEY.includes('YOUR_GEMINI_API_KEY')) {
         console.error("Gemini AI: API Key is missing or placeholder. Skipping analysis.");
@@ -260,13 +275,19 @@ Sinhala Summary: [A very brief Sinhala summary explaining WHY the sentiment was 
                 body: JSON.stringify(payload)
             });
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error(`Gemini API Error (Attempt ${attempt + 1}): HTTP Status ${response.status} - Response: ${errorText}`);
-                if (attempt === maxRetries - 1) break; 
-                await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
-                continue;
-            }
+            // ... getAISentimentSummary ශ්‍රිතය තුළ ...
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                // 🟢 මෙහි error log එකට response status සහ response text දෙකම එක් කරන්න
+                console.error(`Gemini API Error (Attempt ${attempt + 1}): HTTP Status ${response.status} - Response: ${errorText}`);
+                
+                if (attempt === maxRetries - 1) break; 
+                await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
+                continue;
+            }
+
+// ... කේතයේ අනෙක් කොටස් එලෙසම පවතී ...
 
             const result = await response.json();
             const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
