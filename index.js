@@ -351,27 +351,65 @@ Sinhala Summary: [A very brief summary in Sinhala, maximum 2 sentences.]`;
                 body: JSON.stringify(payload)
             });
 
-            if (response.status === 429) {
-                const delay = initialDelay * Math.pow(2, attempt);
-                console.warn(`Gemini API: Rate limit hit (429). Retrying in ${delay}ms...`);
-                await new Promise(resolve => setTimeout(resolve, delay));
-                continue;
-            }
+/**
+ * Uses Gemini to generate a short Sinhala summary and sentiment analysis for the news,
+ * based on the inverse relationship between the USD and other markets.
+ */
+async function getAISentimentSummary(headline, description) {
+    const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
+    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
+
+    if (!GEMINI_API_KEY || GEMINI_API_KEY.includes('YOUR_GEMINI_API_KEY')) {
+        console.error("Gemini AI: API Key is missing or placeholder. Skipping analysis.");
+        return "⚠️ **AI විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ (API Key නැත).**";
+    }
+
+    // <<< වෙනස් කළ තැන: AI එකට දෙන උපදෙස් මාලාව (Prompt) සම්පූර්ණයෙන්ම වෙනස් කිරීම
+    const systemPrompt = `You are a world-class financial market analyst specializing in Forex (e.g., EUR/USD, GBP/USD) and Crypto (e.g., BTC/USD). Your analysis is based on how news impacts the US Dollar (USD).
+
+Follow these CRITICAL rules for determining the sentiment:
+1. First, analyze the news to see if it makes the USD stronger or weaker.
+2. If the news is NEGATIVE for the USD (dollar weakens), you MUST classify the overall market sentiment as 'Bullish'. A weaker dollar is positive for other currencies and crypto assets.
+3. If the news is POSITIVE for the USD (dollar strengthens), you MUST classify the overall market sentiment as 'Bearish'. A stronger dollar is negative for other currencies and crypto.
+4. If the news is neutral, classify the sentiment as 'Neutral'.
+
+Your final output MUST BE IN SINHALA and follow this exact format, with no extra text or markdown:
+Sentiment: [Bullish/Bearish/Neutral]
+Sinhala Summary: [A very brief Sinhala summary explaining WHY the sentiment was chosen based on the impact on the USD. For example: "මෙම පුවත ඩොලරය දුර්වල කරන බැවින්, එය ක්‍රිප්ටෝ සහ අනෙකුත් මුදල් ඒකක සඳහා ධනාත්මක වේ." (Because this news weakens the dollar, it is positive for crypto and other currencies.)]`;
+
+    const userQuery = `Analyze the potential market impact of this news. Headline: "${headline}". Description: "${description}"`;
+
+    const payload = {
+        contents: [{ parts: [{ text: userQuery }] }],
+        tools: [{ "google_search": {} }],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        generationConfig: { temperature: 0.5 }
+    };
+
+    const maxRetries = 3;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            const response = await fetch(GEMINI_API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
 
             if (!response.ok) {
                 const errorText = await response.text();
                 console.error(`Gemini API Error (Attempt ${attempt + 1}): HTTP Status ${response.status} - Response: ${errorText}`);
-                throw new Error("Gemini API call failed with non-OK status.");
+                if (attempt === maxRetries - 1) break; // Last attempt failed, break loop
+                await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
+                continue;
             }
 
             const result = await response.json();
-            const textResponse = result.candidates ? .[0] ? .content ? .parts ? .[0] ? .text;
-
-            // <<< වෙනස් කළ තැන 3: ගැටළුවක් වුවහොත් Cloudflare logs වලින් බලාගැනීමට AI ප්‍රතිචාරය ලොග් කිරීම
+            const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
+            
             console.log("Gemini AI Raw Response:", textResponse); 
 
             if (!textResponse) {
-                console.error("Gemini API Error: Response was empty or malformed.");
                 throw new Error("Gemini response was empty or malformed.");
             }
 
@@ -392,19 +430,17 @@ Sinhala Summary: [A very brief summary in Sinhala, maximum 2 sentences.]`;
             else if (sentiment.toLowerCase().includes('bearish')) sentimentEmoji = '🔴 Bearish 🐻';
 
             return `\n\n✨ <b>AI වෙළඳපොළ විශ්ලේෂණය</b> ✨\n` +
-                `<b>📈 බලපෑම:</b> ${sentimentEmoji}\n` +
-                `<b>📝 සාරාංශය:</b> ${summarySi}`;
+                   `<b>📈 බලපෑම:</b> ${sentimentEmoji}\n` +
+                   `<b>📝 සාරාංශය:</b> ${summarySi}`;
 
         } catch (error) {
             console.error(`Gemini API attempt ${attempt + 1} failed:`, error.message);
             if (attempt === maxRetries - 1) {
                 return "\n\n⚠️ <b>AI විශ්ලේෂණය ලබා ගැනීමට නොහැකි විය.</b>";
             }
-            const delay = initialDelay * Math.pow(2, attempt);
-            await new Promise(resolve => setTimeout(resolve, delay));
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
         }
     }
-    // Fallback if all retries fail
     return "\n\n⚠️ <b>AI විශ්ලේෂණය ලබා ගැනීමට නොහැකි විය.</b>";
 }
 
