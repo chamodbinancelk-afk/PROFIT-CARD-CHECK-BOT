@@ -11,8 +11,8 @@ const HARDCODED_CONFIG = {
     // ⚠️ මේවා ඔබේ සත්‍ය දත්ත මගින් ප්‍රතිස්ථාපනය කරන්න.
     // Cloudflare Secrets වලින් මේවා ඉවත් කර ඇති බවට වග බලා ගන්න.
     TELEGRAM_TOKEN: '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A',       
-    CHAT_ID: '-1003111341307',                 
-    GEMINI_API_KEY: 'AIzaSyAb4dX3HiUb22JnN21_zXzKchngxeueICo',           
+    CHAT_ID: '-1003111341307',            
+    GEMINI_API_KEY: 'AIzaSyAb4dX3HiUb22JnN21_zXzKchngxeueICo',            
 };
 
 // --- NEW CONSTANTS FOR MEMBERSHIP CHECK AND BUTTON (MUST BE SET!) ---
@@ -22,7 +22,7 @@ const CHANNEL_LINK_URL = `https://t.me/${CHANNEL_USERNAME}`; // Button එකේ
 
 // --- Constants ---
 const COLOMBO_TIMEZONE = 'Asia/Colombo';
-const HEADERS = { 
+const HEADERS = {   
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36',
     'Accept-Language': 'en-US,en;q=0.9',
     'Referer': 'https://www.forexfactory.com/',
@@ -152,7 +152,7 @@ async function readKV(env, key) {
  */
 async function writeKV(env, key, value) {
     try {
-         // KV Binding එකේ නම NEWS_STATE විය යුතුයි
+           // KV Binding එකේ නම NEWS_STATE විය යුතුයි
         if (!env.NEWS_STATE) {
             console.error("KV Binding 'NEWS_STATE' is missing in ENV. Write failed.");
             return;
@@ -218,140 +218,6 @@ async function checkChannelMembership(userId) {
 // =================================================================
 
 /**
- * Uses Gemini to generate a short Sinhala summary and sentiment analysis for the news.
- */
-async function getAISentimentSummary(headline, description) {
-    const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
-    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
-    
-    // 1. Initial Key Check
-    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY_HERE') {
-        console.error("Gemini AI: API Key is missing or placeholder. Skipping analysis.");
-        return "⚠️ **AI විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ (API Key නැත).**";
-    }
-
-    const maxRetries = 3;
-    const initialDelay = 1000;
-
-    // 🔴 CHANGE 1: Updated system prompt to request a specific text format
-    const systemPrompt = `Act as a world-class Forex and Crypto market fundamental analyst. Your task is to provide a very brief analysis of the following news, focusing on the sentiment (Bullish, Bearish, or Neutral) and the potential impact on the primary currency mentioned. Use Google Search to ensure the analysis is based on up-to-date market context. The final output MUST be only text in the following exact format: 
-Sentiment: [Bullish/Bearish/Neutral]
-Sinhala Summary: [Sinhala translation of the analysis (very brief, max 2 sentences). Start this summary directly with a capital letter.]`;
-    
-    const userQuery = `Analyze the potential market impact of this news and provide a brief summary in Sinhala. Headline: "${headline}". Description: "${description}"`;
-
-    // 🔴 CHANGE 2 & 3: Removed responseMimeType and responseSchema from payload
-    const payload = {
-        contents: [{ parts: [{ text: userQuery }] }],
-        tools: [{ "google_search": {} }],
-        systemInstruction: {
-            parts: [{ text: systemPrompt }]
-        },
-        // generationConfig: { REMOVED JSON CONFIGURATION
-        //     responseMimeType: "application/json",
-        //     responseSchema: { ... }
-        // }
-    };
-    
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-            const response = await fetch(GEMINI_API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (response.status === 429) {
-                const delay = initialDelay * Math.pow(2, attempt);
-                console.warn(`Gemini API: Rate limit hit (429). Retrying in ${delay}ms...`);
-                await new Promise(resolve => setTimeout(resolve, delay));
-                continue;
-            }
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error(`Gemini API Error (Attempt ${attempt + 1}): HTTP Status ${response.status} - Response: ${errorText}`);
-                throw new Error("Gemini API call failed with non-OK status.");
-            }
-
-            const result = await response.json();
-            const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
-            
-            if (!textResponse) {
-                 console.error("Gemini API Error: Response was empty or malformed.");
-                 throw new Error("Gemini response was empty or malformed.");
-            }
-            
-            // 🔴 CHANGE 4: Parsing the text response instead of JSON
-            const lines = textResponse.split('\n');
-            let sentiment = 'Neutral';
-            let summarySi = 'AI විශ්ලේෂණයක් සැපයීමට නොහැකි විය.';
-
-            lines.forEach(line => {
-                if (line.startsWith('Sentiment:')) {
-                    sentiment = line.replace('Sentiment:', '').trim();
-                } else if (line.startsWith('Sinhala Summary:')) {
-                    summarySi = line.replace('Sinhala Summary:', '').trim();
-                }
-            });
-            
-            // Format the final output string
-            let sentimentEmoji = '⚪';
-            if (sentiment.toLowerCase().includes('bullish')) sentimentEmoji = '🟢 Bullish 🐂';
-/**
- * Uses Gemini to generate a short Sinhala summary and sentiment analysis for the news.
- */
-async function getAISentimentSummary(headline, description) {
-    const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
-
-    // <<< වෙනස් කළ තැන 1: වඩාත් ස්ථාවර සහ නවතම AI Model එකට මාරු කිරීම
-    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
-
-    if (!GEMINI_API_KEY || GEMINI_API_KEY.includes('YOUR_GEMINI_API_KEY')) {
-        console.error("Gemini AI: API Key is missing or placeholder. Skipping analysis.");
-        return "⚠️ **AI විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ (API Key නැත).**";
-    }
-
-    const maxRetries = 3;
-    const initialDelay = 1000;
-
-    // <<< වෙනස් කළ තැන 2: ප්‍රතිචාරය වඩාත් නිවැරදිව ලබාගැනීම සඳහා system prompt එක සුළු වශයෙන් වෙනස් කිරීම
-    const systemPrompt = `You are a world-class financial market analyst specializing in Forex and Crypto. Your task is to provide a brief sentiment analysis (Bullish, Bearish, or Neutral) and a concise summary for the given news. The final output MUST BE IN SINHALA and follow this exact format, with no extra text or markdown:
-Sentiment: [Bullish/Bearish/Neutral]
-Sinhala Summary: [A very brief summary in Sinhala, maximum 2 sentences.]`;
-
-    const userQuery = `Analyze the potential market impact of this news. Headline: "${headline}". Description: "${description}"`;
-
-    const payload = {
-        contents: [{
-            parts: [{
-                text: userQuery
-            }]
-        }],
-        tools: [{
-            "google_search": {}
-        }],
-        systemInstruction: {
-            parts: [{
-                text: systemPrompt
-            }]
-        },
-        generationConfig: {
-            temperature: 0.5, // Adding some temperature for slightly more natural language
-        }
-    };
-
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-            const response = await fetch(GEMINI_API_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload)
-            });
-
-/**
  * Uses Gemini to generate a short Sinhala summary and sentiment analysis for the news,
  * based on the inverse relationship between the USD and other markets.
  */
@@ -366,13 +232,11 @@ async function getAISentimentSummary(headline, description) {
 
     // <<< වෙනස් කළ තැන: AI එකට දෙන උපදෙස් මාලාව (Prompt) සම්පූර්ණයෙන්ම වෙනස් කිරීම
     const systemPrompt = `You are a world-class financial market analyst specializing in Forex (e.g., EUR/USD, GBP/USD) and Crypto (e.g., BTC/USD). Your analysis is based on how news impacts the US Dollar (USD).
-
 Follow these CRITICAL rules for determining the sentiment:
 1. First, analyze the news to see if it makes the USD stronger or weaker.
 2. If the news is NEGATIVE for the USD (dollar weakens), you MUST classify the overall market sentiment as 'Bullish'. A weaker dollar is positive for other currencies and crypto assets.
 3. If the news is POSITIVE for the USD (dollar strengthens), you MUST classify the overall market sentiment as 'Bearish'. A stronger dollar is negative for other currencies and crypto.
 4. If the news is neutral, classify the sentiment as 'Neutral'.
-
 Your final output MUST BE IN SINHALA and follow this exact format, with no extra text or markdown:
 Sentiment: [Bullish/Bearish/Neutral]
 Sinhala Summary: [A very brief Sinhala summary explaining WHY the sentiment was chosen based on the impact on the USD. For example: "මෙම පුවත ඩොලරය දුර්වල කරන බැවින්, එය ක්‍රිප්ටෝ සහ අනෙකුත් මුදල් ඒකක සඳහා ධනාත්මක වේ." (Because this news weakens the dollar, it is positive for crypto and other currencies.)]`;
@@ -382,7 +246,7 @@ Sinhala Summary: [A very brief Sinhala summary explaining WHY the sentiment was 
     const payload = {
         contents: [{ parts: [{ text: userQuery }] }],
         tools: [{ "google_search": {} }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
+        systemInstruction: systemPrompt, // 🟢 මෙතන වෙනස් කර ඇත (Text String එකක් ලෙස)
         generationConfig: { temperature: 0.5 }
     };
 
@@ -430,8 +294,8 @@ Sinhala Summary: [A very brief Sinhala summary explaining WHY the sentiment was 
             else if (sentiment.toLowerCase().includes('bearish')) sentimentEmoji = '🔴 Bearish 🐻';
 
             return `\n\n✨ <b>AI වෙළඳපොළ විශ්ලේෂණය</b> ✨\n` +
-                   `<b>📈 බලපෑම:</b> ${sentimentEmoji}\n` +
-                   `<b>📝 සාරාංශය:</b> ${summarySi}`;
+                `<b>📈 බලපෑම:</b> ${sentimentEmoji}\n` +
+                `<b>📝 සාරාංශය:</b> ${summarySi}`;
 
         } catch (error) {
             console.error(`Gemini API attempt ${attempt + 1} failed:`, error.message);
@@ -651,15 +515,15 @@ async function fetchForexNews(env) {
         
         // --- STEP 3: Construct the final message ---
         const message = `<b>📰 Fundamental News (සිංහල)</b>\n\n` +
-                        `<b>⏰ Date & Time:</b> ${date_time}\n\n` +
-                        `<b>🌎 Headline (English):</b> ${news.headline}\n` +
-                        `🔗 <b>Source Link:</b> ${news.newsUrl}\n\n` +
-                        `🔥 <b>සිංහල:</b> ${description_si}\n` + 
-                        
-                        // Inject the AI Summary here
-                        `${aiSummary}\n\n` + 
-                        
-                        `<b>🚀 Dev: Mr Chamo 🇱🇰</b>`;
+                             `<b>⏰ Date & Time:</b> ${date_time}\n\n` +
+                             `<b>🌎 Headline (English):</b> ${news.headline}\n` +
+                             `🔗 <b>Source Link:</b> ${news.newsUrl}\n\n` +
+                             `🔥 <b>සිංහල:</b> ${description_si}\n` + 
+                             
+                             // Inject the AI Summary here
+                             `${aiSummary}\n\n` + 
+                             
+                             `<b>🚀 Dev: Mr Chamo 🇱🇰</b>`;
 
         await writeKV(env, LAST_FULL_MESSAGE_KEY, message);
         await writeKV(env, LAST_IMAGE_URL_KEY, news.imgUrl || ''); 
@@ -736,103 +600,76 @@ async function handleTelegramUpdate(update, env) {
         case '/fundamental':
         case '/economic':
             const messageKey = (command === '/fundamental') ? LAST_FULL_MESSAGE_KEY : LAST_ECONOMIC_MESSAGE_KEY;
-            // KV read still needs 'env' to access the KV store binding
             const lastImageUrl = (command === '/fundamental') ? await readKV(env, LAST_IMAGE_URL_KEY) : null; 
             
             const lastFullMessage = await readKV(env, messageKey);
             
             if (lastFullMessage) {
-                await sendRawTelegramMessage(chatId, lastFullMessage, lastImageUrl, null, messageId); 
+                await sendRawTelegramMessage(chatId, lastFullMessage, lastImageUrl, null, messageId); // lastImageUrl එක මෙතනට pass කර ඇත.
             } else {
-                const fallbackText = (command === '/fundamental') 
-                    ? "Sorry, no recent fundamental news has been processed yet. Please wait for the next update."
-                    : "Sorry, no recent economic event has been processed yet. Please wait for the next update.";
-                await sendRawTelegramMessage(chatId, fallbackText, null, null, messageId); 
+                await sendRawTelegramMessage(chatId, "⚠️ <b>අවාසනාවකට, දැනට පෙන්වීමට දත්ත නොමැත. කරුණාකර ටික වේලාවකින් නැවත උත්සාහ කරන්න.</b>", null, null, messageId);
             }
             break;
-
+        
+        // --- 3. UNKNOWN COMMANDS / OTHER MESSAGES ---
         default:
-            const defaultReplyText = `ඔබට ස්වයංක්‍රීයව පුවත් ලැබෙනු ඇත. වැඩි විස්තර සහ Commands සඳහා <b>/start</b> යොදන්න.`;
-            await sendRawTelegramMessage(chatId, defaultReplyText, null, null, messageId); 
+            const unknownCommandMessage = 
+                `🤔 <b>අයියෝ!</b> <a href="tg://user?id=${userId}">${username}</a>,\n` +
+                `ඔබ යැවූ විධානය මට තේරුණේ නෑ.\n` +
+                `කරුණාකර /start ටයිප් කර නිවැරදි විධාන බලන්න.`;
+            await sendRawTelegramMessage(chatId, unknownCommandMessage, null, null, messageId);
             break;
     }
 }
 
 
 // =================================================================
-// --- CLOUDFLARE WORKER HANDLERS ---
+// --- WORKER ENTRY POINT (fetch event listener) ---
 // =================================================================
-
-async function handleScheduledTasks(env) {
-    // 1. FUNDAMENTAL NEWS HEADLINES 
-    await fetchForexNews(env); 
-
-    // 2. ECONOMIC CALENDAR EVENTS 
-    await fetchEconomicNews(env); 
-}
 
 export default {
-    /**
-     * Handles scheduled events (Cron trigger) - Checks both types of news
-     */
-    async scheduled(event, env, ctx) {
-        ctx.waitUntil(
-            (async () => {
+    async fetch(request, env, ctx) {
+        // --- 1. Telegram Webhook සඳහා (POST requests) ---
+        if (request.method === 'POST') {
+            const url = new URL(request.url);
+            // Telegram bot API token එක url path එකේ තිබේදැයි පරීක්ෂා කිරීම
+            if (url.pathname.includes(HARDCODED_CONFIG.TELEGRAM_TOKEN)) {
                 try {
-                    await handleScheduledTasks(env);
+                    const update = await request.json();
+                    await handleTelegramUpdate(update, env);
+                    return new Response('OK', { status: 200 });
                 } catch (error) {
-                    console.error("[CRITICAL CRON FAILURE]: ", error.stack);
+                    console.error("Error handling Telegram update:", error.stack);
+                    return new Response('Error processing Telegram update', { status: 500 });
                 }
-            })()
-        );
+            }
+        }
+
+        // --- 2. News Scraping සහ Sending සඳහා (Scheduled events / GET requests) ---
+        // Cron trigger සඳහා, හෝ manual trigger සඳහා (GET request)
+        // Production වලදී, මෙය Cron trigger එකකින් පමණක් ක්‍රියාත්මක විය යුතුය.
+        // මෙය Manual trigger කිරීම සඳහා "/trigger" වැනි path එකක් භාවිතා කළ හැක.
+        const url = new URL(request.url);
+        if (url.pathname === '/trigger' || request.cf.cron) { // Cron trigger හෝ /trigger path එක
+            try {
+                // await fetchEconomicNews(env); // Economic news බැලීමට අවශ්‍ය නම් uncomment කරන්න
+                await fetchForexNews(env);
+                console.log("Forex and Economic news checks completed.");
+                return new Response('News checks initiated successfully.', { status: 200 });
+            } catch (error) {
+                console.error("Scheduled/Triggered task error:", error.stack);
+                return new Response(`Error during news fetch: ${error.message}`, { status: 500 });
+            }
+        }
+
+        // --- 3. Default Response (වෙනත් GET requests සඳහා) ---
+        return new Response('Welcome to Forex News Bot Worker! Use Telegram or scheduled triggers.', { status: 200 });
     },
 
-    /**
-     * Handles Fetch requests (Webhook and Status/Trigger)
-     */
-    async fetch(request, env, ctx) {
-        try {
-            const url = new URL(request.url);
-
-            // Manual trigger and KV Test Message Save
-            if (url.pathname === '/trigger') {
-                const testMessage = `<b>✅ Economic Message Test Successful!</b>\n\nThis message confirms that:\n1. KV read/write is working.\n2. Telegram command logic is functional.\n\nNow try the <code>/economic</code> command in Telegram!`;
-                await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, testMessage);
-                
-                // Run the main scheduled tasks to fetch actual data
-                await handleScheduledTasks(env);
-                
-                return new Response("Scheduled task (All News) manually triggered and KV Test Message saved. Check your Telegram channel and Worker Logs.", { status: 200 });
-            }
-            
-            // Status check
-            if (url.pathname === '/status') {
-                const lastForex = await readKV(env, LAST_HEADLINE_KEY);
-                const lastEconomicPreview = await readKV(env, LAST_ECONOMIC_MESSAGE_KEY);
-                
-                const statusMessage = 
-                    `Forex Bot Worker is active.\n` + 
-                    // KV Binding එකේ තත්ත්වය පරීක්ෂා කිරීම
-                    `KV Binding Check: ${env.NEWS_STATE ? 'OK (Bound)' : 'FAIL (Missing Binding)'}\n` +
-                    `Last Fundamental Headline: ${lastForex || 'N/A'}\n` +
-                    `Last Economic Message (Preview): ${lastEconomicPreview ? lastEconomicPreview.substring(0, 100).replace(/(\r\n|\n|\r)/gm, " ") + '...' : 'N/A'}`;
-                
-                return new Response(statusMessage, { status: 200 });
-            }
-
-            // Webhook Handling (for Telegram commands)
-            if (request.method === 'POST') {
-                console.log("--- WEBHOOK REQUEST RECEIVED (POST) ---");
-                const update = await request.json();
-                await handleTelegramUpdate(update, env); 
-                return new Response('OK', { status: 200 });
-            }
-
-            return new Response('Forex News Bot is ready. Use /trigger to test manually.', { status: 200 });
-            
-        } catch (e) {
-            console.error('[CRITICAL FETCH FAILURE - 1101 ERROR CAUGHT]:', e.stack);
-            return new Response(`Worker threw an unhandled exception: ${e.message}. Check Cloudflare Worker Logs for Stack Trace.`, { status: 500 });
-        }
-    }
+    // --- Cloudflare Cron Triggers සඳහා (Durable Objects හෝ Bindings භාවිතා කරන්නේ නම්) ---
+    // මෙහි `scheduled` method එක Cron Triggers සඳහා භාවිතා කරයි.
+    async scheduled(event, env, ctx) {
+        ctx.waitUntil(fetchForexNews(env)); // Fundamental news check
+        ctx.waitUntil(fetchEconomicNews(env)); // Economic news check
+    },
 };
