@@ -298,12 +298,103 @@ Sinhala Summary: [Sinhala translation of the analysis (very brief, max 2 sentenc
             // Format the final output string
             let sentimentEmoji = '⚪';
             if (sentiment.toLowerCase().includes('bullish')) sentimentEmoji = '🟢 Bullish 🐂';
+/**
+ * Uses Gemini to generate a short Sinhala summary and sentiment analysis for the news.
+ */
+async function getAISentimentSummary(headline, description) {
+    const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
+
+    // <<< වෙනස් කළ තැන 1: වඩාත් ස්ථාවර සහ නවතම AI Model එකට මාරු කිරීම
+    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
+
+    if (!GEMINI_API_KEY || GEMINI_API_KEY.includes('YOUR_GEMINI_API_KEY')) {
+        console.error("Gemini AI: API Key is missing or placeholder. Skipping analysis.");
+        return "⚠️ **AI විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ (API Key නැත).**";
+    }
+
+    const maxRetries = 3;
+    const initialDelay = 1000;
+
+    // <<< වෙනස් කළ තැන 2: ප්‍රතිචාරය වඩාත් නිවැරදිව ලබාගැනීම සඳහා system prompt එක සුළු වශයෙන් වෙනස් කිරීම
+    const systemPrompt = `You are a world-class financial market analyst specializing in Forex and Crypto. Your task is to provide a brief sentiment analysis (Bullish, Bearish, or Neutral) and a concise summary for the given news. The final output MUST BE IN SINHALA and follow this exact format, with no extra text or markdown:
+Sentiment: [Bullish/Bearish/Neutral]
+Sinhala Summary: [A very brief summary in Sinhala, maximum 2 sentences.]`;
+
+    const userQuery = `Analyze the potential market impact of this news. Headline: "${headline}". Description: "${description}"`;
+
+    const payload = {
+        contents: [{
+            parts: [{
+                text: userQuery
+            }]
+        }],
+        tools: [{
+            "google_search": {}
+        }],
+        systemInstruction: {
+            parts: [{
+                text: systemPrompt
+            }]
+        },
+        generationConfig: {
+            temperature: 0.5, // Adding some temperature for slightly more natural language
+        }
+    };
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            const response = await fetch(GEMINI_API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.status === 429) {
+                const delay = initialDelay * Math.pow(2, attempt);
+                console.warn(`Gemini API: Rate limit hit (429). Retrying in ${delay}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue;
+            }
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error(`Gemini API Error (Attempt ${attempt + 1}): HTTP Status ${response.status} - Response: ${errorText}`);
+                throw new Error("Gemini API call failed with non-OK status.");
+            }
+
+            const result = await response.json();
+            const textResponse = result.candidates ? .[0] ? .content ? .parts ? .[0] ? .text;
+
+            // <<< වෙනස් කළ තැන 3: ගැටළුවක් වුවහොත් Cloudflare logs වලින් බලාගැනීමට AI ප්‍රතිචාරය ලොග් කිරීම
+            console.log("Gemini AI Raw Response:", textResponse); 
+
+            if (!textResponse) {
+                console.error("Gemini API Error: Response was empty or malformed.");
+                throw new Error("Gemini response was empty or malformed.");
+            }
+
+            const lines = textResponse.split('\n');
+            let sentiment = 'Neutral';
+            let summarySi = 'AI විශ්ලේෂණයක් සැපයීමට නොහැකි විය.';
+
+            lines.forEach(line => {
+                if (line.toLowerCase().startsWith('sentiment:')) {
+                    sentiment = line.substring('sentiment:'.length).trim();
+                } else if (line.toLowerCase().startsWith('sinhala summary:')) {
+                    summarySi = line.substring('sinhala summary:'.length).trim();
+                }
+            });
+
+            let sentimentEmoji = '🟡 Neutral ⚖️';
+            if (sentiment.toLowerCase().includes('bullish')) sentimentEmoji = '🟢 Bullish 🐂';
             else if (sentiment.toLowerCase().includes('bearish')) sentimentEmoji = '🔴 Bearish 🐻';
-            else sentimentEmoji = '🟡 Neutral ⚖️';
 
             return `\n\n✨ <b>AI වෙළඳපොළ විශ්ලේෂණය</b> ✨\n` +
-                   `<b>📈 බලපෑම:</b> ${sentimentEmoji}\n` +
-                   `<b>📝 සාරාංශය:</b> ${summarySi}`;
+                `<b>📈 බලපෑම:</b> ${sentimentEmoji}\n` +
+                `<b>📝 සාරාංශය:</b> ${summarySi}`;
+
         } catch (error) {
             console.error(`Gemini API attempt ${attempt + 1} failed:`, error.message);
             if (attempt === maxRetries - 1) {
@@ -313,6 +404,8 @@ Sinhala Summary: [Sinhala translation of the analysis (very brief, max 2 sentenc
             await new Promise(resolve => setTimeout(resolve, delay));
         }
     }
+    // Fallback if all retries fail
+    return "\n\n⚠️ <b>AI විශ්ලේෂණය ලබා ගැනීමට නොහැකි විය.</b>";
 }
 
 
