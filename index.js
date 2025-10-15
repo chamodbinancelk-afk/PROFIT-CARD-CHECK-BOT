@@ -10,9 +10,10 @@ import moment from 'moment-timezone';
 const HARDCODED_CONFIG = {
     // ⚠️ මේවා ඔබේ සත්‍ය දත්ත මගින් ප්‍රතිස්ථාපනය කරන්න.
     // Cloudflare Secrets වලින් මේවා ඉවත් කර ඇති බවට වග බලා ගන්න.
-    TELEGRAM_TOKEN: 'YOUR_TELEGRAM_BOT_TOKEN_HERE', // 👈 ඔබේ Bot Token එක දමන්න!       
-    CHAT_ID: 'YOUR_TELEGRAM_CHAT_ID_HERE',           // 👈 ඔබේ Channel Chat ID එක දමන්න!
-    OPENAI_API_KEY: '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', // 🔑 මෙම යතුර දැන් භාවිතා නොවේ, නමුත් අනාගතය සඳහා තබා ඇත.           
+    TELEGRAM_TOKEN: '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A', // 👈 ඔබේ Bot Token එක දමන්න!       
+    CHAT_ID: '-1003111341307',           // 👈 ඔබේ Channel Chat ID එක දමන්න!
+    OPENAI_API_KEY: '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', // 🔑 මෙම යතුර දැන් භාවිතා නොවේ, නමුත් අනාගතය සඳහා තබා ඇත.           
+};           
 };
 
 // --- NEW CONSTANTS FOR MEMBERSHIP CHECK AND BUTTON (MUST BE SET!) ---
@@ -230,8 +231,19 @@ async function checkChannelMembership(userId) {
 /**
  * [CHATGPT VERSION] Uses the OpenAI Chat Completion API to get sentiment analysis.
  */
-async function getAISentimentSummary_ChatGPT(headline, description) {
+// =================================================================
+// --- NON-GEMINI AI INTEGRATION (Keyword Analysis - FINAL) ---
+// =================================================================
+
+/**
+ * [CHATGPT VERSION] Uses the OpenAI Chat Completion API to get sentiment analysis.
+ */
+// 🛑 ශ්‍රිතයේ නම මෙසේ වෙනස් කරන්න! 🛑
+async function getAISentimentSummary(headline, description) { 
+// කලින්: async function getAISentimentSummary_ChatGPT(headline, description) {
     const OPENAI_API_KEY = HARDCODED_CONFIG.OPENAI_API_KEY;
+
+    // ... ඉතිරි කේතය ඒ ආකාරයෙන්ම තිබිය යුතුය.
 
     if (!OPENAI_API_KEY || OPENAI_API_KEY.includes('YOUR_OPENAI_API_KEY_HERE')) {
         return `\n\n✨ <b>AI විශ්ලේෂණ දෝෂය</b> ✨\n` +
