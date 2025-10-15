@@ -4,21 +4,19 @@ import moment from 'moment-timezone';
 
 // =================================================================
 // --- 🔴 HARDCODED CONFIGURATION (KEYS INSERTED DIRECTLY) 🔴 ---
-//    (Replace the placeholder values below with your actual data)
 // =================================================================
 
 const HARDCODED_CONFIG = {
-    // ⚠️ මේවා ඔබේ සත්‍ය දත්ත මගින් ප්‍රතිස්ථාපනය කරන්න.
-    // Cloudflare Secrets වලින් මේවා ඉවත් කර ඇති බවට වග බලා ගන්න.
-    TELEGRAM_TOKEN: '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A',       
-    CHAT_ID: '-1003111341307',                 
-    GEMINI_API_KEY: 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU',           
+    // ⚠️ ඔබේ සත්‍ය දත්ත මගින් ප්‍රතිස්ථාපනය කරන්න.
+    TELEGRAM_TOKEN: '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A',        
+    CHAT_ID: '-1003111341307',                  
+    GEMINI_API_KEY: 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU',            
 };
 
-// --- NEW CONSTANTS FOR MEMBERSHIP CHECK AND BUTTON (MUST BE SET!) ---
-const CHANNEL_USERNAME = 'C_F_News'; // 👈 මෙය ඔබගේ Public Channel Username එක ලෙස සකසන්න!
-const CHANNEL_LINK_TEXT = 'C F NEWS ₿'; // Channel එකේ නම
-const CHANNEL_LINK_URL = `https://t.me/${CHANNEL_USERNAME}`; // Button එකේ Link එක
+// --- NEW CONSTANTS FOR MEMBERSHIP CHECK AND BUTTON ---
+const CHANNEL_USERNAME = 'C_F_News';
+const CHANNEL_LINK_TEXT = 'C F NEWS ₿';
+const CHANNEL_LINK_URL = `https://t.me/${CHANNEL_USERNAME}`;
 
 // --- Constants ---
 const COLOMBO_TIMEZONE = 'Asia/Colombo';
@@ -30,15 +28,12 @@ const HEADERS = {
 };
 
 const FF_NEWS_URL = "https://www.forexfactory.com/news";
-const FF_CALENDAR_URL = "https://www.forexfactory.com/calendar";
-
 
 // --- KV KEYS ---
 const LAST_HEADLINE_KEY = 'last_forex_headline'; 
 const LAST_FULL_MESSAGE_KEY = 'last_full_news_message'; 
 const LAST_IMAGE_URL_KEY = 'last_image_url'; 
-const LAST_ECONOMIC_EVENT_ID_KEY = 'last_economic_event_id'; 
-const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message'; 
+// Economic Keys ඉවත් කර ඇත.
 
 // --- CONSTANT FOR MISSING DESCRIPTION CHECK ---
 const FALLBACK_DESCRIPTION_EN = "No description found.";
@@ -74,12 +69,10 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
             apiMethod = 'sendMessage'; 
         }
         
-        // Add inline keyboard if provided (only for sendMessage)
         if (replyMarkup && apiMethod === 'sendMessage') {
             payload.reply_markup = replyMarkup;
         }
 
-        // Add reply mechanism
         if (replyToId) {
             payload.reply_to_message_id = replyToId;
             payload.allow_sending_without_reply = true;
@@ -95,7 +88,6 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
             });
 
             if (response.status === 429) {
-                // Rate limit: exponential backoff
                 const delay = Math.pow(2, attempt) * 1000;
                 await new Promise(resolve => setTimeout(resolve, delay));
                 continue; 
@@ -103,7 +95,6 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
 
             if (!response.ok) {
                 const errorText = await response.text();
-                // If sendPhoto fails, try sending as sendMessage without the image
                 if (apiMethod === 'sendPhoto') {
                     currentImgUrl = null; 
                     apiMethod = 'sendMessage';
@@ -130,12 +121,10 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
  */
 async function readKV(env, key) {
     try {
-        // KV Binding එකේ නම NEWS_STATE විය යුතුයි
         if (!env.NEWS_STATE) {
             console.error("KV Binding 'NEWS_STATE' is missing in ENV.");
             return null;
         }
-        // env.NEWS_STATE is the KV Namespace binding
         const value = await env.NEWS_STATE.get(key); 
         if (value === null || value === undefined) {
             return null;
@@ -152,15 +141,12 @@ async function readKV(env, key) {
  */
 async function writeKV(env, key, value) {
     try {
-         // KV Binding එකේ නම NEWS_STATE විය යුතුයි
         if (!env.NEWS_STATE) {
             console.error("KV Binding 'NEWS_STATE' is missing in ENV. Write failed.");
             return;
         }
-        // env.NEWS_STATE is the KV Namespace binding
-        // Setting TTL for event IDs for cleanup (30 days)
-        const expirationTtl = key.startsWith(LAST_ECONOMIC_EVENT_ID_KEY) ? 2592000 : undefined;
-        await env.NEWS_STATE.put(key, String(value), { expirationTtl });
+        // Economic Event TTL (2592000) ඉවත් කර ඇත
+        await env.NEWS_STATE.put(key, String(value)); 
     } catch (e) {
         console.error(`KV Write Error (${key}):`, e);
     }
@@ -200,7 +186,6 @@ async function checkChannelMembership(userId) {
 
         if (data.ok && data.result) {
             const status = data.result.status;
-            // 'member', 'administrator', 'creator' are allowed statuses
             if (status === 'member' || status === 'administrator' || status === 'creator') {
                 return true;
             }
@@ -227,30 +212,24 @@ async function getAISentimentSummary(headline, description) {
     // 1. Initial Key Check
     if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY_HERE') {
         console.error("Gemini AI: API Key is missing or placeholder. Skipping analysis.");
-        return "⚠️ **AI විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ (API Key නැත).**";
+        return "⚠️ <b>AI විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ (API Key නැත).</b>";
     }
 
     const maxRetries = 3;
     const initialDelay = 1000;
 
-    // 🔴 CHANGE 1: Updated system prompt to request a specific text format
     const systemPrompt = `Act as a world-class Forex and Crypto market fundamental analyst. Your task is to provide a very brief analysis of the following news, focusing on the sentiment (Bullish, Bearish, or Neutral) and the potential impact on the primary currency mentioned. Use Google Search to ensure the analysis is based on up-to-date market context. The final output MUST be only text in the following exact format: 
 Sentiment: [Bullish/Bearish/Neutral]
 Sinhala Summary: [Sinhala translation of the analysis (very brief, max 2 sentences). Start this summary directly with a capital letter.]`;
     
     const userQuery = `Analyze the potential market impact of this news and provide a brief summary in Sinhala. Headline: "${headline}". Description: "${description}"`;
 
-    // 🔴 CHANGE 2 & 3: Removed responseMimeType and responseSchema from payload
     const payload = {
         contents: [{ parts: [{ text: userQuery }] }],
         tools: [{ "google_search": {} }],
         systemInstruction: {
             parts: [{ text: systemPrompt }]
         },
-        // generationConfig: { REMOVED JSON CONFIGURATION
-        //     responseMimeType: "application/json",
-        //     responseSchema: { ... }
-        // }
     };
     
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -282,7 +261,7 @@ Sinhala Summary: [Sinhala translation of the analysis (very brief, max 2 sentenc
                  throw new Error("Gemini response was empty or malformed.");
             }
             
-            // 🔴 CHANGE 4: Parsing the text response instead of JSON
+            // Parsing the text response
             const lines = textResponse.split('\n');
             let sentiment = 'Neutral';
             let summarySi = 'AI විශ්ලේෂණයක් සැපයීමට නොහැකි විය.';
@@ -312,142 +291,6 @@ Sinhala Summary: [Sinhala translation of the analysis (very brief, max 2 sentenc
             const delay = initialDelay * Math.pow(2, attempt);
             await new Promise(resolve => setTimeout(resolve, delay));
         }
-    }
-}
-
-
-// =================================================================
-// --- ECONOMIC CALENDAR LOGIC ---
-// =================================================================
-
-function analyzeComparison(actual, previous) {
-    try {
-        const cleanAndParse = (value) => parseFloat(value.replace(/%|,|K|M|B/g, '').trim() || '0');
-        const a = cleanAndParse(actual);
-        const p = cleanAndParse(previous);
-
-        if (isNaN(a) || isNaN(p) || actual.trim() === '-' || actual.trim() === '' || actual.toLowerCase().includes('holiday')) {
-            return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
-        }
-
-        if (a > p) {
-            return { comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`, reaction: "📈 Forex සහ Crypto වෙළඳපොළ ඉහළට යා හැකියි (ධනාත්මක බලපෑම්)" };
-        } else if (a < p) {
-            return { comparison: `පෙර දත්තවලට වඩා පහළයි (${actual})`, reaction: "📉 Forex සහ Crypto වෙළඳපොළ පහළට යා හැකියි (ඍණාත්මක බලපෑම්)" };
-        } else {
-            return { comparison: `පෙර දත්තවලට සමානයි (${actual})`, reaction: "⚖ Forex සහ Crypto වෙළඳපොළ ස්ථාවරයෙහි පවතී" };
-        }
-    } catch (error) {
-        console.error("Error analyzing economic comparison:", error);
-        return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
-    }
-}
-
-async function getLatestEconomicEvents() {
-    const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
-    if (!resp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${resp.status} on calendar page.`);
-
-    const html = await resp.text();
-    const $ = load(html);
-    const rows = $('.calendar__row');
-
-    const realizedEvents = [];
-    
-    rows.each((i, el) => {
-        const row = $(el);
-        const eventId = row.attr("data-event-id");
-        const actual = row.find(".calendar__actual").text().trim();
-        
-        if (!eventId || !actual || actual === "-") return;
-        
-        const currency_td = row.find(".calendar__currency");
-        const title_td = row.find(".calendar__event");
-        const previous_td = row.find(".calendar__previous");
-        const impact_td = row.find('.calendar__impact');
-        const time_td = row.find('.calendar__time'); 
-        
-        let impactText = "Unknown";
-        const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first(); 
-        
-        if (impactElement.length > 0) {
-            impactText = impactElement.attr('title') || "Unknown"; 
-            if (impactText === "Unknown") {
-                const classList = impactElement.attr('class') || "";
-                if (classList.includes('impact-icon--high')) impactText = "High Impact Expected";
-                else if (classList.includes('impact-icon--medium')) impactText = "Medium Impact Expected";
-                else if (classList.includes('impact-icon--low')) impactText = "Low Impact Expected";
-                else if (classList.includes('impact-icon--holiday')) impactText = "Non-Economic/Holiday";
-            }
-        }
-
-        realizedEvents.push({
-            id: eventId,
-            currency: currency_td.text().trim(),
-            title: title_td.text().trim(),
-            actual: actual,
-            previous: previous_td.text().trim() || "0",
-            impact: impactText,
-            time: time_td.text().trim()
-        });
-    });
-    
-    return realizedEvents;
-}
-
-async function fetchEconomicNews(env) {
-    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
-    try {
-        const events = await getLatestEconomicEvents();
-        
-        if (events.length === 0) {
-            console.info("[Economic Check] No events with Actual values found.");
-            return; 
-        }
-
-        let sentCount = 0;
-        let lastSentMessage = ""; 
-
-        // Reverse the array to process older events first and ensure the latest is sent last
-        for (const event of events.reverse()) { 
-            const eventKVKey = LAST_ECONOMIC_EVENT_ID_KEY + "_" + event.id; 
-            const lastEventId = await readKV(env, eventKVKey);
-            
-            if (event.id === lastEventId) continue;
-            
-            await writeKV(env, eventKVKey, event.id);
-
-            const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
-            const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
-
-            const message = 
-                `<b>🚨 Economic Calendar Release 🔔</b>\n\n` +
-                `⏰ <b>Date & Time:</b> ${date_time}\n` +
-                `🕓 <b>Release Time:</b> ${event.time} (FF)\n\n` +
-                `🌍 <b>Currency:</b> ${event.currency}\n` +
-                `📌 <b>Headline:</b> ${event.title}\n\n` +
-                `📈 <b>Actual:</b> ${event.actual}\n` +
-                `📉 <b>Previous:</b> ${event.previous}\n\n` +
-                `🔍 <b>Details:</b> ${comparison}\n\n` +
-                `<b>📈 Market Reaction Forecast:</b> ${reaction}\n\n` +
-                `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
-
-            const sendSuccess = await sendRawTelegramMessage(CHAT_ID, message);
-            
-            if (sendSuccess) {
-                lastSentMessage = message; 
-                sentCount++;
-            }
-        }
-        
-        if (sentCount > 0) {
-            await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, lastSentMessage); 
-            console.log(`[Economic Success] Found and sent ${sentCount} new events. Saved latest to KV.`);
-        } else {
-            console.log(`[Economic Success] No new events found to send.`);
-        }
-
-    } catch (error) {
-        console.error("[ECONOMIC ERROR] A CRITICAL error occurred during ECONOMIC task:", error.stack);
     }
 }
 
@@ -522,15 +365,15 @@ async function fetchForexNews(env) {
         
         // --- STEP 3: Construct the final message ---
         const message = `<b>📰 Fundamental News (සිංහල)</b>\n\n` +
-                        `<b>⏰ Date & Time:</b> ${date_time}\n\n` +
-                        `<b>🌎 Headline (English):</b> ${news.headline}\n` +
-                        `🔗 <b>Source Link:</b> ${news.newsUrl}\n\n` +
-                        `🔥 <b>සිංහල:</b> ${description_si}\n` + 
-                        
-                        // Inject the AI Summary here
-                        `${aiSummary}\n\n` + 
-                        
-                        `<b>🚀 Dev: Mr Chamo 🇱🇰</b>`;
+                         `<b>⏰ Date & Time:</b> ${date_time}\n\n` +
+                         `<b>🌎 Headline (English):</b> ${news.headline}\n` +
+                         `🔗 <b>Source Link:</b> ${news.newsUrl}\n\n` +
+                         `🔥 <b>සිංහල:</b> ${description_si}\n` + 
+                         
+                         // Inject the AI Summary here
+                         `${aiSummary}\n\n` + 
+                         
+                         `<b>🚀 Dev: Mr Chamo 🇱🇰</b>`;
 
         await writeKV(env, LAST_FULL_MESSAGE_KEY, message);
         await writeKV(env, LAST_IMAGE_URL_KEY, news.imgUrl || ''); 
@@ -544,11 +387,10 @@ async function fetchForexNews(env) {
 
 
 // =================================================================
-// --- TELEGRAM WEBHOOK HANDLER ---
+// --- TELEGRAM WEBHOOK HANDLER (Only for /fundamental command) ---
 // =================================================================
 
 async function handleTelegramUpdate(update, env) {
-    // Read the required environment variables immediately
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID; 
 
     if (!update.message || !update.message.text) {
@@ -563,7 +405,7 @@ async function handleTelegramUpdate(update, env) {
     const username = update.message.from.username || update.message.from.first_name;
 
     // --- 1. MANDATORY MEMBERSHIP CHECK ---
-    if (command === '/economic' || command === '/fundamental') {
+    if (command === '/fundamental') { // Economic command ඉවත් කර ඇත
         const isMember = await checkChannelMembership(userId);
 
         if (!isMember) {
@@ -592,10 +434,9 @@ async function handleTelegramUpdate(update, env) {
         case '/start':
             const replyText = 
                 `<b>👋 Hello There !</b>\n\n` +
-                `💁‍♂️ මේ BOT ගෙන් පුළුවන් ඔයාට <b>Fundamental News</b> සහ <b>Economic News</b> දෙකම සිංහලෙන් දැන ගන්න. News Update වෙද්දීම <b>C F NEWS MAIN CHANNEL</b> එකට යවනවා.\n\n` +
+                `💁‍♂️ මේ BOT ගෙන් පුළුවන් ඔයාට <b>Fundamental News</b> සිංහලෙන් දැන ගන්න. News Update වෙද්දීම <b>C F NEWS MAIN CHANNEL</b> එකට යවනවා.\n\n` +
                 `🙋‍♂️ Commands වල Usage එක මෙහෙමයි👇\n\n` +
-                `◇ <code>/fundamental</code> :- 📰 Last Fundamental News\n` +
-                `◇ <code>/economic</code> :- 📁 Last Economic News (Economic Calendar Event)\n\n` + 
+                `◇ <code>/fundamental</code> :- 📰 Last Fundamental News\n\n` +
                 `🎯 මේ BOT පැය 24ම Active එකේ තියෙනවා.🔔.. ✍️\n\n` +
                 `◇───────────────◇\n\n` +
                 `🚀 <b>Developer :</b> @chamoddeshan\n` +
@@ -605,19 +446,15 @@ async function handleTelegramUpdate(update, env) {
             break;
 
         case '/fundamental':
-        case '/economic':
-            const messageKey = (command === '/fundamental') ? LAST_FULL_MESSAGE_KEY : LAST_ECONOMIC_MESSAGE_KEY;
-            // KV read still needs 'env' to access the KV store binding
-            const lastImageUrl = (command === '/fundamental') ? await readKV(env, LAST_IMAGE_URL_KEY) : null; 
+            const messageKey = LAST_FULL_MESSAGE_KEY;
+            const lastImageUrl = await readKV(env, LAST_IMAGE_URL_KEY);
             
             const lastFullMessage = await readKV(env, messageKey);
             
             if (lastFullMessage) {
                 await sendRawTelegramMessage(chatId, lastFullMessage, lastImageUrl, null, messageId); 
             } else {
-                const fallbackText = (command === '/fundamental') 
-                    ? "Sorry, no recent fundamental news has been processed yet. Please wait for the next update."
-                    : "Sorry, no recent economic event has been processed yet. Please wait for the next update.";
+                const fallbackText = "Sorry, no recent fundamental news has been processed yet. Please wait for the next update.";
                 await sendRawTelegramMessage(chatId, fallbackText, null, null, messageId); 
             }
             break;
@@ -635,16 +472,13 @@ async function handleTelegramUpdate(update, env) {
 // =================================================================
 
 async function handleScheduledTasks(env) {
-    // 1. FUNDAMENTAL NEWS HEADLINES 
+    // 1. FUNDAMENTAL NEWS HEADLINES පමණක්
     await fetchForexNews(env); 
-
-    // 2. ECONOMIC CALENDAR EVENTS 
-    await fetchEconomicNews(env); 
 }
 
 export default {
     /**
-     * Handles scheduled events (Cron trigger) - Checks both types of news
+     * Handles scheduled events (Cron trigger)
      */
     async scheduled(event, env, ctx) {
         ctx.waitUntil(
@@ -665,28 +499,22 @@ export default {
         try {
             const url = new URL(request.url);
 
-            // Manual trigger and KV Test Message Save
+            // Manual trigger
             if (url.pathname === '/trigger') {
-                const testMessage = `<b>✅ Economic Message Test Successful!</b>\n\nThis message confirms that:\n1. KV read/write is working.\n2. Telegram command logic is functional.\n\nNow try the <code>/economic</code> command in Telegram!`;
-                await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, testMessage);
-                
                 // Run the main scheduled tasks to fetch actual data
                 await handleScheduledTasks(env);
                 
-                return new Response("Scheduled task (All News) manually triggered and KV Test Message saved. Check your Telegram channel and Worker Logs.", { status: 200 });
+                return new Response("Scheduled task (Fundamental News) manually triggered. Check your Telegram channel and Worker Logs.", { status: 200 });
             }
             
             // Status check
             if (url.pathname === '/status') {
                 const lastForex = await readKV(env, LAST_HEADLINE_KEY);
-                const lastEconomicPreview = await readKV(env, LAST_ECONOMIC_MESSAGE_KEY);
                 
                 const statusMessage = 
-                    `Forex Bot Worker is active.\n` + 
-                    // KV Binding එකේ තත්ත්වය පරීක්ෂා කිරීම
+                    `Fundamental News Bot Worker is active.\n` + 
                     `KV Binding Check: ${env.NEWS_STATE ? 'OK (Bound)' : 'FAIL (Missing Binding)'}\n` +
-                    `Last Fundamental Headline: ${lastForex || 'N/A'}\n` +
-                    `Last Economic Message (Preview): ${lastEconomicPreview ? lastEconomicPreview.substring(0, 100).replace(/(\r\n|\n|\r)/gm, " ") + '...' : 'N/A'}`;
+                    `Last Fundamental Headline: ${lastForex || 'N/A'}`;
                 
                 return new Response(statusMessage, { status: 200 });
             }
@@ -699,7 +527,7 @@ export default {
                 return new Response('OK', { status: 200 });
             }
 
-            return new Response('Forex News Bot is ready. Use /trigger to test manually.', { status: 200 });
+            return new Response('Fundamental News Bot is ready. Use /trigger to test manually.', { status: 200 });
             
         } catch (e) {
             console.error('[CRITICAL FETCH FAILURE - 1101 ERROR CAUGHT]:', e.stack);
