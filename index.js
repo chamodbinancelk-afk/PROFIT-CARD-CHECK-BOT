@@ -438,7 +438,9 @@ Sinhala Summary: [Sinhala translation of the analysis (very brief, max 2 sentenc
             let sentimentEmoji = '⚪';
             if (sentiment.toLowerCase().includes('bullish')) sentimentEmoji = '🟢 Bullish 🐂';
             else if (sentiment.toLowerCase().includes('bearish')) sentimentEmoji = '🔴 Bearish 🐻';
-            else sentimentEmoji = '🟡 Neutral ⚖️';
+            else if (sentiment.toLowerCase().includes('neutral')) sentimentEmoji = '🟡 Neutral ⚖️';
+            else sentimentEmoji = '⚪';
+
 
             return `\n\n✨ <b> AI Economic Analysis</b> ✨\n\n` +
                    `<b>📈 Reaction:</b> ${sentimentEmoji}\n\n` +
@@ -682,6 +684,7 @@ async function fetchForexNews(env) {
                         // Inject the AI Summary here
                         `${aiSummary}\n\n` + 
                         
+                        `<b>Source Link:</b> ${news.newsUrl}\n\n` +
                         `<b>🚀 Dev: Mr Chamo 🇱🇰</b>`;
 
         await writeKV(env, LAST_FULL_MESSAGE_KEY, message);
