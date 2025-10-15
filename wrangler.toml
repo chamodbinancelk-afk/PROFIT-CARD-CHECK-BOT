@@ -2,7 +2,7 @@
 # [BASE CONFIGURATION] - පොදු ව්‍යාපෘති සැකසුම (Root Level)
 # =================================================================
 # Root level එකේ නමක් අවශ්‍ය නැත, නමුත් compatibility flags/dates පොදුවේ යෙදිය හැකියි.
-compatibility_date = "2025-10-12" 
+compatibility_date = "2025-10-12"
 compatibility_flags = ["nodejs_compat"]
 
 
