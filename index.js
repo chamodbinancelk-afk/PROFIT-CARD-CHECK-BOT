@@ -12,7 +12,7 @@ const HARDCODED_CONFIG = {
     // Cloudflare Secrets වලින් මේවා ඉවත් කර ඇති බවට වග බලා ගන්න.
     TELEGRAM_TOKEN: '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A',       
     CHAT_ID: '-1003111341307',            
-    GEMINI_API_KEY: 'AIzaSyAb4dX3HiUb22JnN21_zzKchngxeueICo', // 🔑 ඔබේ සත්‍ය යතුර යොදන්න!          
+    GEMINI_API_KEY: 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU', // 🔑 ඔබේ සත්‍ය යතුර යොදන්න!          
 };
 
 // --- NEW CONSTANTS FOR MEMBERSHIP CHECK AND BUTTON (MUST BE SET!) ---
