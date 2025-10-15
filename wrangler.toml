@@ -12,7 +12,7 @@ compatibility_flags = ["nodejs_compat"]
 # [[WORKER 1: FUNDAMENTAL NEWS (index.js)]]
 # =================================================================
 [[workers]]
-name = "cfnews2000-fundamental" 
+name = "cfnews2000" 
 main = "index.js"             # Fundamental News කේත ගොනුව
 
 # Fundamental Worker හි Triggers (workers.triggers sub-table)
@@ -24,7 +24,7 @@ crons = ["*/10 * * * *"] # සෑම විනාඩි 10කට වරක්
 # [[WORKER 2: ECONOMIC NEWS (economic.js)]]
 # =================================================================
 [[workers]]
-name = "cfnews2000-economic" 
+name = "cfnews2000" 
 main = "economic.js"          # Economic News කේත ගොනුව
 
 # Economic Worker හි Triggers (workers.triggers sub-table)
