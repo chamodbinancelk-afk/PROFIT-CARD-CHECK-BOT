@@ -12,7 +12,7 @@ const HARDCODED_CONFIG = {
     // Cloudflare Secrets වලින් මේවා ඉවත් කර ඇති බවට වග බලා ගන්න.
     TELEGRAM_TOKEN: '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A',       
     CHAT_ID: '-1003111341307',            
-    GEMINI_API_KEY: 'AIzaSyAb4dX3HiUb22JnN21_zXzKchngxeueICo',            
+    GEMINI_API_KEY: 'AIzaSyAb4dX3HiUb22JnN21_zzKchngxeueICo', // 🔑 ඔබේ සත්‍ය යතුර යොදන්න!          
 };
 
 // --- NEW CONSTANTS FOR MEMBERSHIP CHECK AND BUTTON (MUST BE SET!) ---
@@ -214,7 +214,7 @@ async function checkChannelMembership(userId) {
 
 
 // =================================================================
-// --- GEMINI AI INTEGRATION ---
+// --- GEMINI AI INTEGRATION (FIXED: Removed google_search tool) ---
 // =================================================================
 
 /**
@@ -223,6 +223,7 @@ async function checkChannelMembership(userId) {
  */
 async function getAISentimentSummary(headline, description) {
     const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
+    // Note: Using gemini-1.5-flash-latest for best performance/cost balance
     const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
 
     if (!GEMINI_API_KEY || GEMINI_API_KEY.includes('YOUR_GEMINI_API_KEY')) {
@@ -230,7 +231,6 @@ async function getAISentimentSummary(headline, description) {
         return "⚠️ **AI විශ්ලේෂණ සේවාව ක්‍රියාත්මක නොවේ (API Key නැත).**";
     }
 
-    // <<< වෙනස් කළ තැන: AI එකට දෙන උපදෙස් මාලාව (Prompt) සම්පූර්ණයෙන්ම වෙනස් කිරීම
     const systemPrompt = `You are a world-class financial market analyst specializing in Forex (e.g., EUR/USD, GBP/USD) and Crypto (e.g., BTC/USD). Your analysis is based on how news impacts the US Dollar (USD).
 Follow these CRITICAL rules for determining the sentiment:
 1. First, analyze the news to see if it makes the USD stronger or weaker.
@@ -243,10 +243,10 @@ Sinhala Summary: [A very brief Sinhala summary explaining WHY the sentiment was 
 
     const userQuery = `Analyze the potential market impact of this news. Headline: "${headline}". Description: "${description}"`;
 
+    // 🟢 FIX: Removed tools: [{ "google_search": {} }], to prevent 400 Bad Request errors.
     const payload = {
         contents: [{ parts: [{ text: userQuery }] }],
-        tools: [{ "google_search": {} }],
-        systemInstruction: systemPrompt, // 🟢 මෙතන වෙනස් කර ඇත (Text String එකක් ලෙස)
+        systemInstruction: systemPrompt, 
         generationConfig: { temperature: 0.5 }
     };
 
@@ -263,7 +263,7 @@ Sinhala Summary: [A very brief Sinhala summary explaining WHY the sentiment was 
             if (!response.ok) {
                 const errorText = await response.text();
                 console.error(`Gemini API Error (Attempt ${attempt + 1}): HTTP Status ${response.status} - Response: ${errorText}`);
-                if (attempt === maxRetries - 1) break; // Last attempt failed, break loop
+                if (attempt === maxRetries - 1) break; 
                 await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
                 continue;
             }
@@ -509,7 +509,8 @@ async function fetchForexNews(env) {
             description_si = await translateText(news.description);
         }
         
-        // --- STEP 2: Get AI Sentiment Summary (NEW) ---
+        // --- STEP 2: Get AI Sentiment Summary (FIXED) ---
+        // AI එකට යවන්නේ විස්තරය නැත්නම් Headline එක පමණි.
         const newsForAI = (news.description !== FALLBACK_DESCRIPTION_EN) ? news.description : news.headline;
         const aiSummary = await getAISentimentSummary(news.headline, newsForAI);
         
@@ -647,13 +648,11 @@ export default {
 
         // --- 2. News Scraping සහ Sending සඳහා (Scheduled events / GET requests) ---
         // Cron trigger සඳහා, හෝ manual trigger සඳහා (GET request)
-        // Production වලදී, මෙය Cron trigger එකකින් පමණක් ක්‍රියාත්මක විය යුතුය.
-        // මෙය Manual trigger කිරීම සඳහා "/trigger" වැනි path එකක් භාවිතා කළ හැක.
         const url = new URL(request.url);
         if (url.pathname === '/trigger' || request.cf.cron) { // Cron trigger හෝ /trigger path එක
             try {
-                // await fetchEconomicNews(env); // Economic news බැලීමට අවශ්‍ය නම් uncomment කරන්න
                 await fetchForexNews(env);
+                await fetchEconomicNews(env);
                 console.log("Forex and Economic news checks completed.");
                 return new Response('News checks initiated successfully.', { status: 200 });
             } catch (error) {
