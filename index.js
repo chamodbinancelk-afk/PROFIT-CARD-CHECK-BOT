@@ -13,7 +13,6 @@ const HARDCODED_CONFIG = {
     TELEGRAM_TOKEN: '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A', // 👈 ඔබේ Bot Token එක දමන්න!       
     CHAT_ID: '-1003111341307',           // 👈 ඔබේ Channel Chat ID එක දමන්න!
     OPENAI_API_KEY: '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', // 🔑 මෙම යතුර දැන් භාවිතා නොවේ, නමුත් අනාගතය සඳහා තබා ඇත.           
-};           
 };
 
 // --- NEW CONSTANTS FOR MEMBERSHIP CHECK AND BUTTON (MUST BE SET!) ---
