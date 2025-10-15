@@ -12,3 +12,16 @@ compatibility_flags = ["nodejs_compat"]
 # Cron Trigger (Scheduled Event)
 [triggers]
 crons = ["*/10 * * * *"] 
+
+
+# --- 2. Economic News Worker සඳහා wrangler.toml ---
+
+name = "cfnews_economic" # ⚠️ නව Worker එකට වෙනස් නමක් දෙන්න
+main = "economic.js" # ⚠️ නව Worker හි කේත ගොනුව
+compatibility_date = "2025-10-12"
+compatibility_flags = ["nodejs_compat"]
+
+
+# Cron Trigger (Economic Events වලට මෙය හොඳයි)
+[triggers]
+crons = ["*/10 * * * *"]  # උදා: සෑම විනාඩි 5කට වරක්
