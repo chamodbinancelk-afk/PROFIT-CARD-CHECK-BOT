@@ -45,6 +45,15 @@ const UPCOMING_ALERT_PREFIX = 'UA_';
 // KV KEY for message waiting for approval
 const PENDING_APPROVAL_PREFIX = 'PENDING_';
 
+// =================================================================
+// --- 🟢 NEW CONSTANTS FOR NEWS POSTING ---
+// =================================================================
+
+// Impact colors for Forex Factory (used in scraping and formatting)
+const IMPACT_HIGH = 'red';
+const IMPACT_MEDIUM = 'orange';
+const IMPACT_LOW = 'yellow';
+
 
 // =================================================================
 // --- UTILITY FUNCTIONS ---
@@ -154,11 +163,11 @@ async function writeKV(env, key, value, expirationTtl) {
         if (key.startsWith(LAST_ECONOMIC_EVENT_ID_KEY)) {
             options.expirationTtl = 2592000; // 30 days
         } else if (key.startsWith(PRICE_ACTION_PREFIX)) { 
-             options.expirationTtl = 86400; // 24 hours
+            options.expirationTtl = 86400; // 24 hours
         } else if (key.startsWith(UPCOMING_ALERT_PREFIX)) {
-             options.expirationTtl = 172800; // 48 hours
+            options.expirationTtl = 172800; // 48 hours
         } else if (key.startsWith(PENDING_APPROVAL_PREFIX)) {
-             options.expirationTtl = 3600; // 1 hour
+            options.expirationTtl = 3600; // 1 hour
         }
         
         if (expirationTtl !== undefined) {
@@ -241,14 +250,224 @@ async function sendPriceActionToUser(kvKey, targetChatId, callbackId, env) {
         })
     });
 }
-async function fetchEconomicNews(env) { 
-    // This is a placeholder. Implement real logic based on your system.
-    // This function should call getLatestEconomicEvents and post to channel.
+
+
+// =================================================================
+// --- 🟢 NEW: RELEASED ECONOMIC NEWS HANDLER (Core Logic for released news) ---
+// =================================================================
+
+/**
+ * Scrapes Forex Factory for newly released economic events (Actual != '-')
+ * and handles posting them to the Telegram channel, handling multiple missed events.
+ */
+async function fetchEconomicNews(env) {
+    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
+    const LAST_ID_KEY = LAST_ECONOMIC_EVENT_ID_KEY;
+    const MESSAGE_KEY = LAST_ECONOMIC_MESSAGE_KEY;
+
+    try {
+        const events = await getLatestEconomicEvents(env);
+        if (events.length === 0) {
+            console.log("[Economic News] No recent released economic events found in the scrape range.");
+            return;
+        }
+
+        // 1. Get the last processed Event ID
+        const lastProcessedIdStr = await readKV(env, LAST_ID_KEY);
+        let lastProcessedId = lastProcessedIdStr ? parseInt(lastProcessedIdStr, 10) : 0;
+        
+        // 2. Filter out events that are already processed
+        // Events are scraped in reverse chronological order (newest first based on ID) by getLatestEconomicEvents
+        const newEvents = [];
+        for (const event of events) {
+            // Compare IDs to find truly new events. Larger ID means newer event.
+            if (parseInt(event.id, 10) > lastProcessedId) {
+                newEvents.push(event);
+            }
+        }
+        
+        // 3. Sort new events from OLDEST to NEWEST ID to maintain correct posting order
+        // This is crucial for not missing news that were released between two cron runs.
+        newEvents.sort((a, b) => parseInt(a.id, 10) - parseInt(b.id, 10)); 
+
+        if (newEvents.length === 0) {
+            console.log(`[Economic News] Found ${events.length} events, but all are already processed (Last ID: ${lastProcessedId}).`);
+            return;
+        }
+
+        console.log(`[Economic News] Found ${newEvents.length} new events to process.`);
+
+        let lastSentMessage = "";
+        let newLastId = lastProcessedId;
+        
+        // 4. Process and post each new event sequentially
+        for (const event of newEvents) {
+            const fullMessage = formatEconomicNewsMessage(event);
+            
+            // Send the message to the channel
+            const sendResult = await sendRawTelegramMessage(CHAT_ID, fullMessage, null, null, null, env);
+
+            if (sendResult) {
+                // Update KV state only upon successful send
+                newLastId = parseInt(event.id, 10);
+                await writeKV(env, LAST_ID_KEY, newLastId);
+                
+                // Keep the latest sent message to display via /economic command
+                lastSentMessage = fullMessage; 
+            } else {
+                // If a message fails, stop the sequence to avoid skipping subsequent, newer events.
+                console.error(`[Economic News] Failed to send event ${event.id}. Halting sequence.`);
+                break; 
+            }
+        }
+
+        // 5. Update the /economic command message only once at the end
+        if (lastSentMessage) {
+            await writeKV(env, MESSAGE_KEY, lastSentMessage);
+        }
+
+        console.log(`[Economic News] Successfully processed ${newEvents.length} events. New Last ID: ${newLastId}.`);
+
+    } catch (error) {
+        console.error("[Economic News Handler Error]:", error.stack);
+    }
 }
 
-async function getLatestEconomicEvents() {
-    // This is a placeholder. Implement real logic based on your system.
-    return [];
+
+/**
+ * Scrapes the Forex Factory calendar for released events (Actual field is not empty '-').
+ * @returns {Array<Object>} List of released events, sorted by ID (newest first).
+ */
+async function getLatestEconomicEvents(env) {
+    // Check events from the last 2 days to prevent fetching massive, old data
+    const twoDaysAgo = moment().tz(COLOMBO_TIMEZONE).subtract(2, 'days').startOf('day'); 
+    
+    try {
+        // Fetch the calendar
+        const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
+        if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+
+        const html = await resp.text();
+        const $ = load(html);
+        const rows = $('.calendar__row');
+
+        const releasedEvents = [];
+        let date_str = moment().tz(COLOMBO_TIMEZONE).format('ddd MMM D YYYY'); // Default to today
+
+        rows.each((i, el) => {
+            const row = $(el);
+            const eventId = row.attr("data-event-id");
+            const actual = row.find(".calendar__actual").text().trim();
+
+            // Skip if not a valid event or not yet released
+            if (!eventId || actual === "-") return; 
+
+            // Handle date rows to update the current date
+            if (row.hasClass('calendar__row--day')) {
+                const newDateStr = row.find('.calendar__day').text().trim();
+                if (newDateStr) date_str = newDateStr;
+                return;
+            }
+
+            const impact_td = row.find('.calendar__impact');
+            const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first();
+            const classList = impactElement.attr('class') || "";
+            
+            let impact;
+            if (classList.includes('impact-icon--red')) impact = IMPACT_HIGH;
+            else if (classList.includes('impact-icon--orange')) impact = IMPACT_MEDIUM;
+            else if (classList.includes('impact-icon--yellow')) impact = IMPACT_LOW;
+            else return; // Skip Holiday/None
+
+            const currency = row.find(".calendar__currency").text().trim();
+            const title = row.find(".calendar__event").text().trim();
+            const time_str = row.find('.calendar__time').text().trim();
+            const forecast = row.find(".calendar__forecast").text().trim();
+            const previous = row.find(".calendar__previous").text().trim();
+
+            let releaseMoment;
+            try {
+                // FF uses UTC internally, we parse the time string based on the date_str
+                releaseMoment = moment.tz(`${date_str} ${time_str}`, 'ddd MMM D YYYY h:mmA', 'UTC'); 
+                if (!releaseMoment.isValid()) return;
+                
+                // Ensure we only process events from the last 2 days to prevent massive backlog
+                if (releaseMoment.isBefore(twoDaysAgo)) return;
+                
+            } catch (e) {
+                console.error(`Error parsing release time for ${eventId}:`, e);
+                return;
+            }
+
+            const colomboTime = releaseMoment.clone().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
+            
+            releasedEvents.push({
+                id: eventId,
+                impact: impact,
+                currency: currency,
+                title: title,
+                actual: actual,
+                forecast: forecast,
+                previous: previous,
+                colomboTime: colomboTime,
+                releaseTimeUTC: releaseMoment.toISOString()
+            });
+        });
+        
+        // Sort by ID (newest first) to ensure the loop in fetchEconomicNews stops correctly
+        return releasedEvents.sort((a, b) => parseInt(b.id, 10) - parseInt(a.id, 10));
+
+    } catch (error) {
+        console.error("[Scraping Error - getLatestEconomicEvents]:", error.stack);
+        return [];
+    }
+}
+
+
+/**
+ * Formats the economic news message into Sinhala (HTML format).
+ */
+function formatEconomicNewsMessage(event) {
+    
+    let impactEmoji = '';
+    let impactTextSinhala = '';
+    let impactColorStart = '';
+    let impactColorEnd = '</b>';
+    
+    switch (event.impact) {
+        case IMPACT_HIGH:
+            impactEmoji = '🔴';
+            impactTextSinhala = 'ඉතා ඉහළ බලපෑමක් (High Impact)';
+            impactColorStart = '<b><span style="color:#FF0000;">'; // Red
+            break;
+        case IMPACT_MEDIUM:
+            impactEmoji = '🟠';
+            impactTextSinhala = 'මධ්‍යස්ථ බලපෑමක් (Medium Impact)';
+            impactColorStart = '<b><span style="color:#FFA500;">'; // Orange
+            break;
+        case IMPACT_LOW:
+        default:
+            impactEmoji = '🟡';
+            impactTextSinhala = 'පහළ බලපෑමක් (Low Impact)';
+            impactColorStart = '<b><span style="color:#FFFF00;">'; // Yellow
+            break;
+    }
+    
+    const baseMessage = 
+        `${impactEmoji} <b>🚨 NEW ECONOMIC NEWS RELEASED 🚨</b>\n\n` +
+        `📢 <b>සිද්ධිය:</b> ${event.title}\n` +
+        `🌍 <b>මුදල් වර්ගය:</b> ${event.currency}\n\n` +
+        `⏱️ <b>නිකුත් වූ වේලාව:</b> ${event.colomboTime} (SL Time)\n\n` +
+        `📊 <b>වෙළඳපොළ බලපෑම:</b> ${impactColorStart}${impactTextSinhala}${impactColorEnd}\n\n` +
+        `━━━━━━━ ** දත්ත ** ━━━━━━━\n\n` +
+        `🟢 <b>Actual (සැබෑ අගය):</b> <code>${event.actual}</code>\n` +
+        `🔵 <b>Forecast (අනාවැකිය):</b> <code>${event.forecast || 'N/A'}</code>\n` +
+        `⚪ <b>Previous (පෙර අගය):</b> <code>${event.previous || 'N/A'}</code>\n\n` +
+        `━━━━━━━━━━━━━━━━━━\n\n` +
+        `<b>⚠️ අවදානම් කළමනාකරණය ඉතා වැදගත්!</b>\n` +
+        `🔥 <b>${CHANNEL_LINK_TEXT}</b>`;
+
+    return baseMessage;
 }
 
 
@@ -286,9 +505,13 @@ async function scrapeUpcomingEvents(env) {
             const classList = impactElement.attr('class') || "";
             
             // Filter out 'Holiday' (Grey) and Non-economic news.
-            if (classList.includes('impact-icon--holiday') || classList.includes('impact-icon--none')) {
-                continue; // Skip Holiday or Non-economic (Grey) news
-            }
+            // Also identify the impact to store in KV.
+            let impact;
+            if (classList.includes('impact-icon--red')) impact = IMPACT_HIGH;
+            else if (classList.includes('impact-icon--orange')) impact = IMPACT_MEDIUM;
+            else if (classList.includes('impact-icon--yellow')) impact = IMPACT_LOW;
+            else continue; // Skip Holiday or Non-economic (Grey) news
+
             
             const currency = row.find(".calendar__currency").text().trim();
             const title = row.find(".calendar__event").text().trim();
@@ -325,6 +548,7 @@ async function scrapeUpcomingEvents(env) {
                 if (releaseMoment.isBefore(tomorrow)) { 
                     const alertData = {
                         id: eventId,
+                        impact: impact, // 🚨 NEW: Storing impact in KV for better filtering
                         currency: currency,
                         title: title,
                         release_time_utc: releaseMoment.toISOString(),
@@ -366,7 +590,8 @@ async function checkAndSendAlerts(env) {
             
             const alertData = JSON.parse(alertDataStr);
 
-            if (alertData.is_sent || alertData.is_approved) continue; 
+            // ⚠️ FIX/IMPROVEMENT: Only send approval requests for High Impact news (Red)
+            if (alertData.impact !== IMPACT_HIGH || alertData.is_sent || alertData.is_approved) continue; 
 
             const alertTime = moment.utc(alertData.alert_time_utc);
             
@@ -621,6 +846,7 @@ async function handleCommands(update, env) {
 // =================================================================
 
 async function handleScheduledTasks(env) {
+    // Order is important: Alerts check first, then scrape upcoming events, then check released news
     await checkAndSendAlerts(env); 
     await scrapeUpcomingEvents(env); 
     await fetchEconomicNews(env);
