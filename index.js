@@ -11,7 +11,7 @@ const HARDCODED_CONFIG = {
     CHAT_ID: '-1003111341307', // Main Channel ID
     
     // 🔴 NEW: YOUR (OWNER'S) TELEGRAM USER ID (A number, e.g., 123456789)
-    OWNER_USER_ID: 1234567890, // ⚠️ මෙය ඔබගේ Telegram User ID එකෙන් ආදේශ කරන්න ⚠️
+    OWNER_USER_ID: 1901997764, // ⚠️ මෙය ඔබගේ Telegram User ID එකෙන් ආදේශ කරන්න ⚠️
 };
 
 // --- NEW CONSTANTS FOR BUTTON (MUST BE SET!) ---
