@@ -317,7 +317,82 @@ async function scrapeUpcomingEvents(env) {
             const existingAlert = await readKV(env, alertKVKey); 
 
             if (!existingAlert) {
-                if (releaseMoment.isBefore(tomorrow.add(1, 'day'))) {
+// =================================================================
+// --- UPCOMING NEWS SCRAPER & ALERT HANDLER (MODIFIED FOR ALL IMPACTS) ---
+// =================================================================
+
+/**
+ * Scrapes upcoming High, Medium, and Low Impact events and stores them in KV. 
+ * (MODIFIED to include ALL impacts for testing)
+ */
+async function scrapeUpcomingEvents(env) {
+    try {
+        const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
+        if (!resp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${resp.status} on calendar page.`);
+
+        const html = await resp.text();
+        const $ = load(html);
+        const rows = $('.calendar__row');
+
+        const tomorrow = moment().tz(COLOMBO_TIMEZONE).add(1, 'day').endOf('day');
+        let newAlertsCount = 0;
+
+        const rowElements = rows.get(); 
+
+        for (const el of rowElements) { 
+            const row = $(el);
+            const eventId = row.attr("data-event-id");
+            const actual = row.find(".calendar__actual").text().trim();
+
+            if (!eventId || actual !== "-") continue;
+            
+            const impact_td = row.find('.calendar__impact');
+            const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first();
+            
+            const classList = impactElement.attr('class') || "";
+            
+            // 💡 MODIFIED LOGIC: Filter out 'Holiday' (Grey) and Non-economic news.
+            //    We keep High, Medium, and Low Impact news.
+            if (classList.includes('impact-icon--holiday') || classList.includes('impact-icon--none')) {
+                continue; // Skip Holiday or Non-economic (Grey) news
+            }
+            
+            // ❌ PREVIOUS LINE REMOVED: if (!classList.includes('impact-icon--high')) continue; 
+            // 👆 Now all High, Medium, and Low Impact news will proceed.
+
+            const currency = row.find(".calendar__currency").text().trim();
+            const title = row.find(".calendar__event").text().trim();
+            const time_str = row.find('.calendar__time').text().trim();
+            
+            let date_str = row.prevAll('.calendar__row--day').first().find('.calendar__day').text().trim();
+            if (!date_str) {
+                date_str = moment().tz(COLOMBO_TIMEZONE).format('ddd MMM D YYYY');
+            }
+            
+            let releaseMoment;
+            try {
+                releaseMoment = moment.tz(`${date_str} ${time_str}`, 'ddd MMM D YYYY h:mmA', 'UTC');
+                if (!releaseMoment.isValid()) {
+                    console.error(`Invalid date/time for event ${eventId}: ${date_str} ${time_str}`);
+                    continue; 
+                }
+                const today = moment().tz(COLOMBO_TIMEZONE);
+                if(releaseMoment.year() < today.year()) releaseMoment.year(today.year());
+                
+            } catch (e) {
+                console.error(`Error parsing release time for ${eventId}:`, e);
+                continue;
+            }
+            
+            const alertMoment = releaseMoment.clone().subtract(1, 'hour');
+            
+            const alertKVKey = UPCOMING_ALERT_PREFIX + eventId;
+            
+            const existingAlert = await readKV(env, alertKVKey); 
+
+            if (!existingAlert) {
+                // Only schedule alerts that happen before the end of tomorrow
+                if (releaseMoment.isBefore(tomorrow)) { 
                     const alertData = {
                         id: eventId,
                         currency: currency,
@@ -331,9 +406,9 @@ async function scrapeUpcomingEvents(env) {
                     newAlertsCount++;
                 }
             }
-        } // End of for...of loop
+        } 
         
-        console.log(`[Alert Scheduler] Scraped and scheduled ${newAlertsCount} new High Impact Alerts.`);
+        console.log(`[Alert Scheduler] Scraped and scheduled ${newAlertsCount} new High/Medium/Low Impact Alerts.`);
 
     } catch (error) {
         console.error("[UPCOMING ALERT ERROR] Failed to scrape upcoming events:", error.stack);
