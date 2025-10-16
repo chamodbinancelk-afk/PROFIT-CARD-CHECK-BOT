@@ -14,7 +14,7 @@ const HARDCODED_CONFIG = {
     
     // 🔴 NEW: YOUR (OWNER'S) TELEGRAM USER ID 
     // ⚠️ මෙය ඔබගේ Telegram User ID එකෙන් ආදේශ කරන්න (e.g., 1234567890)
-    OWNER_USER_ID: 1234567890, 
+    OWNER_USER_ID: 1901997764, 
 };
 
 // --- NEW CONSTANTS FOR BUTTON (MUST BE SET!) ---
@@ -28,7 +28,8 @@ const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36',
     'Accept-Language': 'en-US,en;q=0.9',
     'Referer': 'https://www.forexfactory.com/',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*
+    // 💡 FIX APPLIED HERE: The string is now correctly terminated.
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
 };
 
 const FF_CALENDAR_URL = "https://www.forexfactory.com/calendar";
@@ -40,7 +41,7 @@ const PRICE_ACTION_PREFIX = 'PA_';
 
 // --- UPCOMING NEWS ALERT KV KEY ---
 const UPCOMING_ALERT_PREFIX = 'UA_';
-// 🔴 NEW: KV KEY for message waiting for approval
+// KV KEY for message waiting for approval
 const PENDING_APPROVAL_PREFIX = 'PENDING_';
 
 
@@ -48,10 +49,6 @@ const PENDING_APPROVAL_PREFIX = 'PENDING_';
 // --- UTILITY FUNCTIONS ---
 // =================================================================
 
-/**
- * Sends a message to Telegram, using the hardcoded TELEGRAM_TOKEN.
- * (Modified to allow replyToId only for CHANNEL messages)
- */
 async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarkup = null, replyToId = null, env) {
     const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
     const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
@@ -128,9 +125,6 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
     return false;
 }
 
-/**
- * Reads data from the KV Namespace, assuming it is bound as env.NEWS_STATE.
- */
 async function readKV(env, key) {
     try {
         if (!env.NEWS_STATE) {
@@ -148,9 +142,6 @@ async function readKV(env, key) {
     }
 }
 
-/**
- * Writes data to the KV Namespace, assuming it is bound as env.NEWS_STATE.
- */
 async function writeKV(env, key, value, expirationTtl) {
     try {
         if (!env.NEWS_STATE) {
@@ -201,13 +192,6 @@ async function checkChannelMembership(userId, env) {
     }
 }
 
-// ... (Other Utility Functions like fetchAndFormatPriceAction, sendPriceActionToUser, 
-//      analyzeComparison, getLatestEconomicEvents are not included here for brevity, 
-//      but should remain in your code as they were in the previous complete version) ...
-
-/**
- * Helper function to edit the message (to remove the button)
- */
 async function editMessage(chatId, messageId, text, replyMarkup, env) {
     const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
     const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
@@ -237,18 +221,38 @@ async function editMessage(chatId, messageId, text, replyMarkup, env) {
     }
 }
 
-// --- Placeholder for other required functions from the previous full code ---
-// NOTE: For a full working system, ensure these functions are copied back in.
 
-// Dummy implementations for simplicity in this file:
-async function sendPriceActionToUser(kvKey, targetChatId, callbackId, env) { /* ... implementation ... */ }
-function analyzeComparison(actual, previous) { /* ... implementation ... */ }
-async function getLatestEconomicEvents() { /* ... implementation ... */ return []; }
-async function fetchEconomicNews(env) { /* ... implementation (uses getLatestEconomicEvents) ... */ }
+// --- Placeholder functions (required for full operation) ---
+
+async function sendPriceActionToUser(kvKey, targetChatId, callbackId, env) { 
+    // This is a placeholder. Implement real logic based on your system.
+    const alertText = '✅ Price Action Details ඔබගේ Inbox එකට යැව්වා.';
+    const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
+    const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
+    const answerUrl = `${TELEGRAM_API_URL}/answerCallbackQuery`;
+    await fetch(answerUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            callback_query_id: callbackId,
+            text: alertText,
+            show_alert: false
+        })
+    });
+}
+async function fetchEconomicNews(env) { 
+    // This is a placeholder. Implement real logic based on your system.
+    // This function should call getLatestEconomicEvents and post to channel.
+}
+
+async function getLatestEconomicEvents() {
+    // This is a placeholder. Implement real logic based on your system.
+    return [];
+}
 
 
 // =================================================================
-// --- UPCOMING NEWS SCRAPER & ALERT HANDLER (FIXED FOR AWAIT) ---
+// --- UPCOMING NEWS SCRAPER & ALERT HANDLER (FIXED FOR AWAIT ERROR) ---
 // =================================================================
 
 /**
@@ -266,7 +270,7 @@ async function scrapeUpcomingEvents(env) {
         const tomorrow = moment().tz(COLOMBO_TIMEZONE).add(1, 'day').endOf('day');
         let newAlertsCount = 0;
 
-        // 💡 FIX: Convert Cheerio object to a standard array and use for...of loop
+        // 💡 FIX: Convert Cheerio object to a standard array and use an async for...of loop.
         const rowElements = rows.get(); 
 
         for (const el of rowElements) { 
@@ -285,24 +289,20 @@ async function scrapeUpcomingEvents(env) {
             const currency = row.find(".calendar__currency").text().trim();
             const title = row.find(".calendar__event").text().trim();
             const time_str = row.find('.calendar__time').text().trim();
-            // Find the preceding day row for the date
+            
             let date_str = row.prevAll('.calendar__row--day').first().find('.calendar__day').text().trim();
             if (!date_str) {
-                // If it's the very first row, Cheerio sometimes struggles; can't reliably get date without context
-                // For simplicity, we assume this row is for today if the date is missing during scraping
                 date_str = moment().tz(COLOMBO_TIMEZONE).format('ddd MMM D YYYY');
             }
             
             let releaseMoment;
             try {
-                // Use UTC format for parsing to ensure consistency
                 releaseMoment = moment.tz(`${date_str} ${time_str}`, 'ddd MMM D YYYY h:mmA', 'UTC');
                 if (!releaseMoment.isValid()) {
                     console.error(`Invalid date/time for event ${eventId}: ${date_str} ${time_str}`);
                     continue; 
                 }
                 const today = moment().tz(COLOMBO_TIMEZONE);
-                // Simple year adjustment logic for events crossing year boundaries
                 if(releaseMoment.year() < today.year()) releaseMoment.year(today.year());
                 
             } catch (e) {
@@ -314,7 +314,6 @@ async function scrapeUpcomingEvents(env) {
             
             const alertKVKey = UPCOMING_ALERT_PREFIX + eventId;
             
-            // AWAIT IS NOW SAFE HERE
             const existingAlert = await readKV(env, alertKVKey); 
 
             if (!existingAlert) {
@@ -341,10 +340,6 @@ async function scrapeUpcomingEvents(env) {
     }
 }
 
-/**
- * Checks for alerts. If time is right, sends the alert message 
- * to the OWNER for approval instead of sending directly to the main channel.
- */
 async function checkAndSendAlerts(env) {
     const OWNER_USER_ID = HARDCODED_CONFIG.OWNER_USER_ID;
     if (!OWNER_USER_ID) {
@@ -366,16 +361,12 @@ async function checkAndSendAlerts(env) {
             
             const alertData = JSON.parse(alertDataStr);
 
-            // Check if already sent (to owner) or already approved (sent to channel)
             if (alertData.is_sent || alertData.is_approved) continue; 
 
             const alertTime = moment.utc(alertData.alert_time_utc);
             
-            // Check if alert time is reached (now.isSameOrAfter(alertTime)) 
-            // and is within the last 5 minutes (to avoid sending very old alerts)
             if (now.isSameOrAfter(alertTime) && now.clone().subtract(5, 'minutes').isBefore(alertTime)) {
                 
-                // --- 1. Construct Alert Message for OWNER Approval ---
                 const colomboReleaseTime = moment.utc(alertData.release_time_utc).tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
                 
                 const approvalMessage =
@@ -386,7 +377,6 @@ async function checkAndSendAlerts(env) {
                     `📌 <b>Event:</b> ${alertData.title}\n\n` +
                     `✅ <b>Action:</b> මෙම පුවත නිකුත් වීමට පැයකට පෙර Channel එකට යැවීමට පහත බොත්තම ඔබන්න.`;
                 
-                // 2. Create Approval Button
                 const approvalReplyMarkup = {
                     inline_keyboard: [
                         [{
@@ -396,11 +386,9 @@ async function checkAndSendAlerts(env) {
                     ]
                 };
 
-                // 3. Send to Owner's Private Chat
                 const sentMessage = await sendRawTelegramMessage(OWNER_USER_ID, approvalMessage, null, approvalReplyMarkup, null, env);
                 
                 if (sentMessage && sentMessage.message_id) {
-                    // 4. Store the message content and the owner's message ID 
                     const pendingKey = PENDING_APPROVAL_PREFIX + alertData.id;
                     const pendingData = {
                         originalMessage: approvalMessage, 
@@ -409,8 +397,7 @@ async function checkAndSendAlerts(env) {
                     };
                     await writeKV(env, pendingKey, JSON.stringify(pendingData));
                     
-                    // Update the main alert KV key
-                    alertData.is_sent = true; // Mark as sent to Owner
+                    alertData.is_sent = true; 
                     await writeKV(env, alertKVKey, JSON.stringify(alertData)); 
                     
                     sentCount++;
@@ -430,14 +417,6 @@ async function checkAndSendAlerts(env) {
     }
 }
 
-
-// =================================================================
-// --- TELEGRAM WEBHOOK HANDLER (MODIFIED FOR APPROVAL CALLBACK) ---
-// =================================================================
-
-/**
- * Handles incoming Telegram updates, including /commands AND Callback Queries (Button Clicks).
- */
 async function handleTelegramUpdate(update, env) {
     const OWNER_USER_ID = HARDCODED_CONFIG.OWNER_USER_ID;
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
@@ -445,26 +424,21 @@ async function handleTelegramUpdate(update, env) {
     const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
     const answerUrl = `${TELEGRAM_API_URL}/answerCallbackQuery`;
 
-
-    // --- 1. Handle Callback Query (Button Clicks) ---
     if (update.callback_query) {
         const callbackQuery = update.callback_query;
         const callbackData = callbackQuery.data;
         const targetChatId = callbackQuery.from.id; 
         const callbackId = callbackQuery.id;
 
-        // --- A. Price Action Button (PA_VIEW) ---
         if (callbackData.startsWith('PA_VIEW:')) {
             const kvKeySuffix = callbackData.replace('PA_VIEW:', '');
             await sendPriceActionToUser(kvKeySuffix, targetChatId, callbackId, env);
             return;
         }
 
-        // --- B. Approval Button (APPROVE) ---
         if (callbackData.startsWith('APPROVE:')) {
             const eventId = callbackData.replace('APPROVE:', '');
             
-            // 1. Only the Owner can approve
             if (targetChatId.toString() !== OWNER_USER_ID.toString()) {
                 await fetch(answerUrl, {
                     method: 'POST',
@@ -514,8 +488,6 @@ async function handleTelegramUpdate(update, env) {
                 return;
             }
 
-
-            // 2. Format Final Message for Channel (Remove Approval-specific text)
             const finalMessage = pendingData.originalMessage.replace(
                 '🚨 <b>APPROVAL REQUIRED: HIGH IMPACT NEWS ALERT</b> 🚨', 
                 '⚠️ <b>HIGH IMPACT NEWS ALERT 🔔</b>'
@@ -524,16 +496,13 @@ async function handleTelegramUpdate(update, env) {
                 '⛔ <b>Trading Warning:</b> මෙම පුවත නිකුත් වන අවස්ථාවේදී වෙළඳපොළේ විශාල උච්චාවචනයක් (Volatility) ඇති විය හැක. අවදානම් කළමනාකරණය ඉතා වැදගත් වේ.'
             );
             
-            // 3. Send to Main Channel
             const sendSuccess = await sendRawTelegramMessage(CHAT_ID, finalMessage, null, null, null, env);
 
             if (sendSuccess) {
-                // 4. Update KV states
                 alertData.is_approved = true;
                 await writeKV(env, alertKVKey, JSON.stringify(alertData));
                 await env.NEWS_STATE.delete(pendingKey);
                 
-                // 5. Edit Owner's Message to confirm approval and remove button
                 await editMessage(
                     targetChatId, 
                     callbackQuery.message.message_id, 
@@ -542,7 +511,6 @@ async function handleTelegramUpdate(update, env) {
                     env
                 );
 
-                // 6. Answer the callback query
                 await fetch(answerUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -568,7 +536,6 @@ async function handleTelegramUpdate(update, env) {
         }
     }
 
-    // --- 2. Handle Message Command (/start, /economic) ---
     if (!update.message || !update.message.text) {
         return;
     }
@@ -576,9 +543,6 @@ async function handleTelegramUpdate(update, env) {
     await handleCommands(update, env);
 }
 
-
-// ... (handleCommands function is not included here for brevity, 
-//      but should remain in your code as it was in the previous complete version) ...
 async function handleCommands(update, env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
 
@@ -589,7 +553,6 @@ async function handleCommands(update, env) {
     const messageId = update.message.message_id;
     const username = update.message.from.username || update.message.from.first_name;
 
-    // --- 1. MANDATORY MEMBERSHIP CHECK (Only for /economic) ---
     if (command === '/economic') {
         const isMember = await checkChannelMembership(userId, env);
 
@@ -614,7 +577,6 @@ async function handleCommands(update, env) {
         }
     }
 
-    // --- 2. COMMAND EXECUTION ---
     switch (command) {
         case '/start':
             const replyText =
@@ -649,26 +611,17 @@ async function handleCommands(update, env) {
     }
 }
 
-
 // =================================================================
 // --- CLOUDFLARE WORKER HANDLERS (UNCHANGED) ---
 // =================================================================
 
 async function handleScheduledTasks(env) {
-    // 1. **NEWS RELEASE ALERT** - Check and send the alert message 1 hour before the release (TO OWNER).
     await checkAndSendAlerts(env); 
-    
-    // 2. **UPCOMING NEWS SCRAPER** - Scrape new High Impact events and schedule alerts.
     await scrapeUpcomingEvents(env); 
-
-    // 3. **REALIZED NEWS** - Scrape and send news that has ALREADY BEEN RELEASED.
     await fetchEconomicNews(env);
 }
 
 export default {
-    /**
-     * Handles scheduled events (Cron trigger)
-     */
     async scheduled(event, env, ctx) {
         ctx.waitUntil(
             (async () => {
@@ -681,14 +634,10 @@ export default {
         );
     },
 
-    /**
-     * Handles Fetch requests (Webhook and Status/Trigger)
-     */
     async fetch(request, env, ctx) {
         try {
             const url = new URL(request.url);
 
-            // Manual trigger
             if (url.pathname === '/trigger') {
                 const testMessage = `<b>✅ Economic Message Test Successful!</b>\n\nThis message confirms that:\n1. KV read/write is working.\n2. Telegram command logic is functional.\n\nNow try the <code>/economic</code> command in Telegram!`;
                 await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, testMessage);
@@ -698,7 +647,6 @@ export default {
                 return new Response("Scheduled task (Economic News) manually triggered and KV Test Message saved. Check your Telegram channel and Worker Logs.", { status: 200 });
             }
             
-            // Status check
             if (url.pathname === '/status') {
                 const lastEconomicPreview = await readKV(env, LAST_ECONOMIC_MESSAGE_KEY);
                 
@@ -710,7 +658,6 @@ export default {
                 return new Response(statusMessage, { status: 200 });
             }
 
-            // Webhook Handling (for Telegram commands AND Callback Queries)
             if (request.method === 'POST') {
                 console.log("--- WEBHOOK REQUEST RECEIVED (POST) ---");
                 const update = await request.json();
