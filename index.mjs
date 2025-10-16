@@ -3,10 +3,11 @@ import { load } from 'cheerio';
 import moment from 'moment-timezone';
 
 // =================================================================
-// --- HARDCODED CONFIGURATION (KEYS INSERTED DIRECTLY) ---
+// --- 🔴 HARDCODED CONFIGURATION (KEYS INSERTED DIRECTLY) 🔴 ---
 // =================================================================
 
 const HARDCODED_CONFIG = {
+    // ⚠️ ඔබේ සත්‍ය Telegram Token එක මෙහි ඇතුළත් කරන්න.
     TELEGRAM_TOKEN: '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A',
     CHAT_ID: '-1003111341307',
 };
@@ -14,7 +15,6 @@ const HARDCODED_CONFIG = {
 // --- NEW CONSTANTS FOR BUTTON (MUST BE SET!) ---
 const CHANNEL_USERNAME = 'C_F_News';
 const CHANNEL_LINK_TEXT = 'C F NEWS ₿';
-// ERROR FIX: Use backticks (`) for template literals
 const CHANNEL_LINK_URL = `https://t.me/${CHANNEL_USERNAME}`;
 
 // --- Constants ---
@@ -31,7 +31,7 @@ const FF_CALENDAR_URL = "https://www.forexfactory.com/calendar";
 // --- KV KEYS ---
 const LAST_ECONOMIC_EVENT_ID_KEY = 'last_economic_event_id';
 const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message';
-const PRICE_ACTION_PREFIX = 'PA_'; // නව KV Prefix එක
+const PRICE_ACTION_PREFIX = 'PA_'; // 🆕 නව KV Prefix එක
 
 // =================================================================
 // --- UTILITY FUNCTIONS ---
@@ -48,7 +48,6 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
         console.error("TELEGRAM_TOKEN is missing or placeholder.");
         return false;
     }
-    // ERROR FIX: Use backticks (`)
     const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
     
     let currentImgUrl = imgUrl;
@@ -76,7 +75,6 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
             payload.allow_sending_without_reply = true;
         }
 
-        // ERROR FIX: Use backticks (`)
         const apiURL = `${TELEGRAM_API_URL}/${apiMethod}`;
         
         try {
@@ -98,16 +96,13 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
                     currentImgUrl = null;
                     apiMethod = 'sendMessage';
                     attempt = -1;
-                    // ERROR FIX: Use backticks (`)
                     console.error(`SendPhoto failed, retrying as sendMessage: ${errorText}`);
                     continue;
-
                 }
-                // ERROR FIX: Use backticks (`)
                 console.error(`Telegram API Error (${apiMethod}): ${response.status} - ${errorText}`);
                 break;
             }
-            return response.json(); // Return success response to get message_id
+            return true; // Success
         } catch (error) {
             console.error("Error sending message to Telegram:", error);
             const delay = Math.pow(2, attempt) * 1000;
@@ -133,7 +128,6 @@ async function readKV(env, key) {
         }
         return value;
     } catch (e) {
-        // ERROR FIX: Use backticks (`)
         console.error(`KV Read Error (${key}):`, e);
         return null;
     }
@@ -167,7 +161,6 @@ async function writeKV(env, key, value, expirationTtl) {
 
         await env.NEWS_STATE.put(key, String(value), options);
     } catch (e) {
-        // ERROR FIX: Use backticks (`)
         console.error(`KV Write Error (${key}):`, e);
     }
 }
@@ -177,15 +170,13 @@ async function writeKV(env, key, value, expirationTtl) {
  * Checks if a user is a member of the specified CHAT_ID channel. (Required for /economic command)
  */
 async function checkChannelMembership(userId, env) {
-    // Token එක Hardcode කරන නිසා env වලින් ලබා ගැනීම ඉවත් කර ඇත.
+    // ⚠️ Token එක Hardcode කරන නිසා env වලින් ලබා ගැනීම ඉවත් කර ඇත.
     const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
-    // ERROR FIX: Use backticks (`)
     const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 
     if (!TELEGRAM_TOKEN || !CHAT_ID) return false;
 
-    // ERROR FIX: Use backticks (`)
     const url = `${TELEGRAM_API_URL}/getChatMember?chat_id=${CHAT_ID}&user_id=${userId}`;
 
     try {
@@ -200,7 +191,6 @@ async function checkChannelMembership(userId, env) {
         }
         return false;
     } catch (error) {
-        // ERROR FIX: Use backticks (`)
         console.error(`[Membership Check Error for user ${userId}]:`, error);
         return false;
     }
@@ -208,59 +198,54 @@ async function checkChannelMembership(userId, env) {
 
 
 // =================================================================
-// --- NEW PRICE ACTION HELPER FUNCTIONS ---
+// --- 🆕 NEW PRICE ACTION HELPER FUNCTIONS 🆕 ---
 // =================================================================
 
 /**
- * [PLACEHOLDER] Fetches real-time price action and formats the message.
+ * 🆕 [PLACEHOLDER] Fetches real-time price action and formats the message.
  * !!! IMPORTANT: Replace this with your actual price API fetching logic. !!!
  * @param {object} event - The economic event data.
  * @returns {string} The formatted Price Action message.
  */
 async function fetchAndFormatPriceAction(event, env) {
-    // REPLACE THIS WITH ACTUAL API CALLS 
+    // ⚠️ REPLACE THIS WITH ACTUAL API CALLS ⚠️
     // Example Price Data Structure (Placeholder)
     const pair = event.currency + 'USD';
     const priceBefore = (Math.random() * 0.005 + 1.08000).toFixed(5);
     const priceAfter = (Math.random() * 0.005 + 1.08000).toFixed(5);
     const movement = ((priceAfter - priceBefore) * 100000).toFixed(0);
 
-    const direction = movement >= 0 ? 'Higher' : 'Lower';
+    const direction = movement >= 0 ? '🔺 Higher' : '🔻 Lower';
     const emoji = movement >= 0 ? '📈' : '📉';
 
-    // ERROR FIX: Use backticks (`)
-    const priceMessage = `
-        <b>${emoji} Price Action Analysis for ${event.currency}</b>\n\n
-        \u200D <b>Pair:</b> ${pair}\n
-        \u200D <b>Movement:</b> ${movement} Pips ${direction}\n\n
-        \u200D <b>Pre-Release Price:</b> ${priceBefore}\n
-        \u200D <b>Post-Release Price:</b> ${priceAfter}\n\n
-        <i>(This data is for illustration only. Please implement a reliable Forex Price API.)</i>`;
+    const priceMessage = 
+        `<b>${emoji} Price Action Analysis for ${event.currency}</b>\n\n` +
+        `💱 <b>Pair:</b> ${pair}\n` +
+        `📉 <b>Movement:</b> ${movement} Pips ${direction}\n\n` +
+        `📊 <b>Pre-Release Price:</b> ${priceBefore}\n` +
+        `📊 <b>Post-Release Price:</b> ${priceAfter}\n\n` +
+        `<i>(This data is for illustration only. Please implement a reliable Forex Price API.)</i>`;
 
     return priceMessage;
 }
 
 /**
- * Handles sending the Price Action message to the user's private chat.
+ * 🆕 Handles sending the Price Action message to the user's private chat.
  */
 async function sendPriceActionToUser(kvKey, targetChatId, callbackId, env) {
     const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
-    // ERROR FIX: Use backticks (`)
     const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 
     // 1. KV එකෙන් ගබඩා කළ Price Action Message එක ලබා ගැනීම
-    // ERROR FIX: Use backticks (`)
     const priceActionData = await readKV(env, `${PRICE_ACTION_PREFIX}${kvKey}`);
 
-    let alertText = 'Price Action Details ඔබගේ Inbox එකට යැව්වා.';
+    let alertText = '✅ Price Action Details ඔබගේ Inbox එකට යැව්වා.';
     
     if (!priceActionData) {
-        alertText = 'Price Action Data කල් ඉකුත් වී ඇත, නැතහොත් සොයා ගැනීමට නොහැක.';
-        // If data is missing, send an alert to the user's private chat and then notify Telegram (below)
+        alertText = '❌ Price Action Data කල් ඉකුත් වී ඇත, නැතහොත් සොයා ගැනීමට නොහැක.';
         await sendRawTelegramMessage(targetChatId, alertText, null, null, null, env);
     } else {
-        // ERROR FIX: Use backticks (`)
-        const message = `<b>Price Action Details</b>\n\n${priceActionData}`;
+        const message = `<b>📈 Price Action Details</b>\n\n${priceActionData}`;
 
         try {
             // 2. User ගේ Private Inbox එකට Message එක යැවීම
@@ -268,12 +253,11 @@ async function sendPriceActionToUser(kvKey, targetChatId, callbackId, env) {
         } catch (error) {
             console.error(`Error sending price action to ${targetChatId}:`, error);
             // Error එකක් ආවොත් (බොට්ව Start කර නැතිනම් වැනි), User ට Alert එකක් පෙන්වීම
-            alertText = 'පළමුව බොට් එකට Private Message එකක් යවා /start කරන්න.';
+            alertText = '🚨 පළමුව බොට් එකට Private Message එකක් යවා /start කරන්න.';
         }
     }
 
     // 3. Telegram API එකට "Alert Sent" බව දැනුම් දීම (Button එකේ Loading state එක ඉවත් කිරීමට)
-    // ERROR FIX: Use backticks (`)
     const answerUrl = `${TELEGRAM_API_URL}/answerCallbackQuery`;
     await fetch(answerUrl, {
         method: 'POST',
@@ -281,7 +265,7 @@ async function sendPriceActionToUser(kvKey, targetChatId, callbackId, env) {
         body: JSON.stringify({
             callback_query_id: callbackId,
             text: alertText,
-            show_alert: alertText.startsWith('පළමුව') // Show alert only if there was a problem
+            show_alert: alertText.startsWith('🚨')
         })
     });
 }
@@ -292,36 +276,32 @@ async function sendPriceActionToUser(kvKey, targetChatId, callbackId, env) {
 // =================================================================
 
 function analyzeComparison(actual, previous) {
+    // ... (Original analyzeComparison function is unchanged) ...
     try {
         const cleanAndParse = (value) => parseFloat(value.replace(/%|,|K|M|B/g, '').trim() || '0');
         const a = cleanAndParse(actual);
         const p = cleanAndParse(previous);
 
         if (isNaN(a) || isNaN(p) || actual.trim() === '-' || actual.trim() === '' || actual.toLowerCase().includes('holiday')) {
-            // ERROR FIX: Use backticks (`)
-            return { comparison: `Actual: ${actual}`, reaction: "වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
+            return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
         }
 
         if (a > p) {
-            // ERROR FIX: Use backticks (`)
-            return { comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`, reaction: "Forex සහ Crypto වෙළඳපොළ ඉහළට යා හැකියි (ධනාත්මක බලපෑම්)" };
+            return { comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`, reaction: "📈 Forex සහ Crypto වෙළඳපොළ ඉහළට යා හැකියි (ධනාත්මක බලපෑම්)" };
         } else if (a < p) {
-            // ERROR FIX: Use backticks (`)
-            return { comparison: `පෙර දත්තවලට වඩා පහළයි (${actual})`, reaction: "Forex සහ Crypto වෙළඳපොළ පහළට යා හැකියි (ඍණාත්මක බලපෑම්)" };
+            return { comparison: `පෙර දත්තවලට වඩා පහළයි (${actual})`, reaction: "📉 Forex සහ Crypto වෙළඳපොළ පහළට යා හැකියි (ඍණාත්මක බලපෑම්)" };
         } else {
-            // ERROR FIX: Use backticks (`)
-            return { comparison: `පෙර දත්තවලට සමානයි (${actual})`, reaction: "Forex සහ Crypto වෙළඳපොළ ස්ථාවරයෙහි පවතී" };
+            return { comparison: `පෙර දත්තවලට සමානයි (${actual})`, reaction: "⚖ Forex සහ Crypto වෙළඳපොළ ස්ථාවරයෙහි පවතී" };
         }
     } catch (error) {
         console.error("Error analyzing economic comparison:", error);
-        // ERROR FIX: Use backticks (`)
-        return { comparison: `Actual: ${actual}`, reaction: "වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
+        return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
     }
 }
 
 async function getLatestEconomicEvents() {
+    // ... (Original getLatestEconomicEvents function is unchanged) ...
     const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
-    // ERROR FIX: Use backticks (`)
     if (!resp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${resp.status} on calendar page.`);
 
     const html = await resp.text();
@@ -372,7 +352,7 @@ async function getLatestEconomicEvents() {
 }
 
 /**
- * Modified to save Price Action to KV and send message with an inline button.
+ * 🆕 Modified to save Price Action to KV and send message with an inline button.
  */
 async function fetchEconomicNews(env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
@@ -389,8 +369,7 @@ async function fetchEconomicNews(env) {
 
         // Reverse the array to process older events first and ensure the latest is sent last
         for (const event of events.reverse()) {
-            // ERROR FIX: Use backticks (`)
-            const eventKVKey = `${LAST_ECONOMIC_EVENT_ID_KEY}_${event.id}`;
+            const eventKVKey = LAST_ECONOMIC_EVENT_ID_KEY + "_" + event.id;
             const lastEventId = await readKV(env, eventKVKey);
             
             if (event.id === lastEventId) continue;
@@ -401,38 +380,35 @@ async function fetchEconomicNews(env) {
             const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
 
             // --- 1. Main Channel Message (Short Version) ---
-            // ERROR FIX: Use backticks (`)
-            const mainMessage = `
-                <b>\uD83D\uDCE2 Economic Calendar Release \uD83D\uDCE2</b>\n\n
-                \u200D <b>Date & Time:</b> ${date_time}\n
-                \u200D <b>Release Time:</b> ${event.time} (FF)\n\n
-                \u200D <b>Currency:</b> ${event.currency}\n
-                \u200D <b>Headline:</b> ${event.title}\n\n
-                \u200D <b>Actual:</b> ${event.actual}\n
-                \u200D <b>Previous:</b> ${event.previous}\n\n
-                \u200D <b>Details:</b> ${comparison}\n\n
-                <b>\uD83D\uDC40 Market Reaction Forecast:</b> ${reaction}\n\n
-                \u200D <b>Dev: Mr Chamo \uD83C\uDF10</b>`;
+            const mainMessage =
+                `<b>🚨 Economic Calendar Release 🔔</b>\n\n` +
+                `⏰ <b>Date & Time:</b> ${date_time}\n` +
+                `🕓 <b>Release Time:</b> ${event.time} (FF)\n\n` +
+                `🌍 <b>Currency:</b> ${event.currency}\n` +
+                `📌 <b>Headline:</b> ${event.title}\n\n` +
+                `📈 <b>Actual:</b> ${event.actual}\n` +
+                `📉 <b>Previous:</b> ${event.previous}\n\n` +
+                `🔍 <b>Details:</b> ${comparison}\n\n` +
+                `<b>📈 Market Reaction Forecast:</b> ${reaction}\n\n` +
+                `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
 
             // --- 2. Fetch & Save Price Action to KV ---
-            // ERROR FIX: Use backticks (`)
             const kvKeySuffix = `${event.currency}_${event.id}`;
-            // ERROR FIX: Use backticks (`)
             const priceActionKVKey = `${PRICE_ACTION_PREFIX}${kvKeySuffix}`;
             
-            // Price Action Message එක ලබා ගැනීම (Placeholder)
+            // 🆕 Price Action Message එක ලබා ගැනීම (Placeholder)
             const priceActionMessage = await fetchAndFormatPriceAction(event, env); 
             
-            // Price Action Message එක KV එකේ තාවකාලිකව Save කිරීම (24 hours TTL)
+            // 🆕 Price Action Message එක KV එකේ තාවකාලිකව Save කිරීම (24 hours TTL)
             await writeKV(env, priceActionKVKey, priceActionMessage);
 
             // --- 3. Create Inline Button ---
             const replyMarkup = {
                 inline_keyboard: [
                     [{ 
-                        text: "View Price Action \uD83D\uDD0D", 
-                        // ERROR FIX: Use backticks (`)
-                        callback_data: `PA_VIEW:${kvKeySuffix}`
+                        text: "View Price Action 📈", 
+                        // Callback Data එක ලෙස Price Action KV Key Suffix එක යවමු.
+                        callback_data: `PA_VIEW:${kvKeySuffix}` 
                     }]
                 ]
             };
@@ -448,10 +424,9 @@ async function fetchEconomicNews(env) {
         
         if (sentCount > 0) {
             await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, lastSentMessage);
-            // ERROR FIX: Use backticks (`)
             console.log(`[Economic Success] Found and sent ${sentCount} new events. Saved latest to KV.`);
         } else {
-            console.log("[Economic Success] No new events found to send.");
+            console.log(`[Economic Success] No new events found to send.`);
         }
 
     } catch (error) {
@@ -465,7 +440,7 @@ async function fetchEconomicNews(env) {
 // =================================================================
 
 /**
- * Handles incoming Telegram updates, including /commands AND Callback Queries (Button Clicks).
+ * 🆕 Handles incoming Telegram updates, including /commands AND Callback Queries (Button Clicks).
  */
 async function handleTelegramUpdate(update, env) {
     // --- 1. Handle Callback Query (Button Clicks) ---
@@ -512,18 +487,16 @@ async function handleCommands(update, env) {
         const isMember = await checkChannelMembership(userId, env);
 
         if (!isMember) {
-            // ERROR FIX: Use backticks (`)
-            const denialMessage = `
-                \u274C<b>Access Denied</b> \u274C\n\n
-                Hey There <a href="tg://user?id=${userId}">${username}</a>,\n
-                You Must Join <b>${CHANNEL_LINK_TEXT}</b> Channel To Use This BOT.\n
-                So, Please Join it & Try Again. Thank You \uD83D\uDE4F`;
+            const denialMessage =
+                `⛔ <b>Access Denied</b> ⛔\n\n` +
+                `Hey There <a href="tg://user?id=${userId}">${username}</a>,\n` +
+                `You Must Join <b>${CHANNEL_LINK_TEXT}</b> Channel To Use This BOT.\n` +
+                `So, Please Join it & Try Again.👀 Thank You ✍️`;
 
             const replyMarkup = {
                 inline_keyboard: [
                     [{
-                        // ERROR FIX: Use backticks (`)
-                        text: `${CHANNEL_LINK_TEXT} </>`,
+                        text: `🔥 ${CHANNEL_LINK_TEXT} < / >`,
                         url: CHANNEL_LINK_URL
                     }]
                 ]
@@ -537,17 +510,16 @@ async function handleCommands(update, env) {
     // --- 2. COMMAND EXECUTION ---
     switch (command) {
         case '/start':
-            // ERROR FIX: Use backticks (`)
-            const replyText = `
-                <b>\uD83D\uDC4B Hello There !</b>\n\n
-                \u200D මේ BOT ගෙන් පුළුවන් ඔයාට <b>Economic News</b> සිංහලෙන් දැන ගන්න. News Update වෙද්දීම <b>C F NEWS MAIN CHANNEL</b> එකට යවනවා.\n\n
-                \u200D Commands වල Usage එක මෙහෙමයි\n\n
-                \u200D ◇ <code>/economic</code> :- Last Economic News (Economic Calendar Event)\n\n
-                \u200D මේ BOT පැය 24ම Active එකේ තියෙනවා... \n\n
-                \u200D ◇───────────────◇\n\n
-                \u200D <b>Developer :</b> @chamoddeshan\n
-                \u200D <b>Mr Chamo Corporation ©</b>\n\n
-                \u200D ◇───────────────◇`;
+            const replyText =
+                `<b>👋 Hello There !</b>\n\n` +
+                `💁‍♂️ මේ BOT ගෙන් පුළුවන් ඔයාට <b>Economic News</b> සිංහලෙන් දැන ගන්න. News Update වෙද්දීම <b>C F NEWS MAIN CHANNEL</b> එකට යවනවා.\n\n` +
+                `🙋‍♂️ Commands වල Usage එක මෙහෙමයි👇\n\n` +
+                `◇ <code>/economic</code> :- 📁 Last Economic News (Economic Calendar Event)\n\n` +
+                `🎯 මේ BOT පැය 24ම Active එකේ තියෙනවා.🔔.. ✍️\n\n` +
+                `◇───────────────◇\n\n` +
+                `🚀 <b>Developer :</b> @chamoddeshan\n` +
+                `🔥 <b>Mr Chamo Corporation ©</b>\n\n` +
+                `◇───────────────◇`;
             await sendRawTelegramMessage(chatId, replyText, null, null, messageId, env);
             break;
 
@@ -564,7 +536,6 @@ async function handleCommands(update, env) {
             break;
 
         default:
-            // ERROR FIX: Use backticks (`)
             const defaultReplyText = `ඔබට ස්වයංක්‍රීයව පුවත් ලැබෙනු ඇත. වැඩි විස්තර සහ Commands සඳහා <b>/start</b> යොදන්න.`;
             await sendRawTelegramMessage(chatId, defaultReplyText, null, null, messageId, env);
             break;
@@ -606,8 +577,7 @@ export default {
 
             // Manual trigger
             if (url.pathname === '/trigger') {
-                // ERROR FIX: Use backticks (`)
-                const testMessage = `<b>\u2705 Economic Message Test Successful!</b>\n\nThis message confirms that:\n1. KV read/write is working.\n2. Telegram command logic is functional.\n\nNow try the <code>/economic</code> command in Telegram!`;
+                const testMessage = `<b>✅ Economic Message Test Successful!</b>\n\nThis message confirms that:\n1. KV read/write is working.\n2. Telegram command logic is functional.\n\nNow try the <code>/economic</code> command in Telegram!`;
                 await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, testMessage);
                 
                 // Run the main scheduled tasks to fetch actual data
@@ -620,8 +590,10 @@ export default {
             if (url.pathname === '/status') {
                 const lastEconomicPreview = await readKV(env, LAST_ECONOMIC_MESSAGE_KEY);
                 
-                // ERROR FIX: Use backticks (`)
-                const statusMessage = `Economic Bot Worker is active.\nKV Binding Check: ${env.NEWS_STATE ? 'OK (Bound)' : 'FAIL (Missing Binding)'}\nLast Economic Message (Preview): ${lastEconomicPreview ? lastEconomicPreview.substring(0, 100).replace(/(\r\n|\n|\r)/gm, " ") + '...' : 'N/A'}`;
+                const statusMessage =
+                    `Economic Bot Worker is active.\n` +
+                    `KV Binding Check: ${env.NEWS_STATE ? 'OK (Bound)' : 'FAIL (Missing Binding)'}\n` +
+                    `Last Economic Message (Preview): ${lastEconomicPreview ? lastEconomicPreview.substring(0, 100).replace(/(\r\n|\n|\r)/gm, " ") + '...' : 'N/A'}`;
                 
                 return new Response(statusMessage, { status: 200 });
             }
@@ -631,7 +603,7 @@ export default {
                 console.log("--- WEBHOOK REQUEST RECEIVED (POST) ---");
                 const update = await request.json();
                 
-                // New Handler for both commands and callback queries
+                // 🆕 New Handler for both commands and callback queries
                 ctx.waitUntil(handleTelegramUpdate(update, env)); 
                 
                 // Telegram API requires a fast 200 OK response for Webhook
@@ -642,7 +614,6 @@ export default {
             
         } catch (e) {
             console.error('[CRITICAL FETCH FAILURE - 1101 ERROR CAUGHT]:', e.stack);
-            // ERROR FIX: Use backticks (`)
             return new Response(`Worker threw an unhandled exception: ${e.message}. Check Cloudflare Worker Logs for Stack Trace.`, { status: 500 });
         }
     }
