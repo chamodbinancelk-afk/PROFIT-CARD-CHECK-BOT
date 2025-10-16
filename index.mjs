@@ -1,6 +1,6 @@
 // --- ES MODULE IMPORTS (Required for Cloudflare Workers) ---
-import { load } from 'cheerio';
-import moment from 'moment-timezone';
+const { load } = require('cheerio');
+const moment = require('moment-timezone');
 
 // =================================================================
 // --- 🔴 HARDCODED CONFIGURATION (KEYS INSERTED DIRECTLY) 🔴 ---
