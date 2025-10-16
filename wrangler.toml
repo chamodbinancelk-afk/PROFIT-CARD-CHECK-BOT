@@ -5,7 +5,6 @@ main = "index.js"
 compatibility_date = "2025-10-12" 
 
 # 💡 FIX: ඔබගේ index.js ගොනුවේ export default භාවිතා කිරීමට මෙය අත්‍යවශ්‍ය වේ.
-type = "module" 
 
 # Node.js core modules (crypto, stream, fs) සඳහා සහය දැක්වීමට.
 compatibility_flags = ["nodejs_compat"]
