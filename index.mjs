@@ -14,7 +14,7 @@ const HARDCODED_CONFIG = {
 // --- NEW CONSTANTS FOR BUTTON (MUST BE SET!) ---
 const CHANNEL_USERNAME = 'C_F_News';
 const CHANNEL_LINK_TEXT = 'C F NEWS ₿';
-const CHANNEL_LINK_URL = https://t.me/${CHANNEL_USERNAME};
+const CHANNEL_LINK_URL = 'https://t.me/${CHANNEL_USERNAME};
 
 // --- Constants ---
 const COLOMBO_TIMEZONE = 'Asia/Colombo';
