@@ -7,7 +7,7 @@ import moment from 'moment-timezone';
 // =================================================================
 
 const HARDCODED_CONFIG = {
-    // ⚠️ ඔබේ සත්‍ය Telegram Token එක මෙහි ඇතුළත් කරන්න.
+    / ⚠️ ඔබේ සත්‍ය Telegram Token එක මෙහි ඇතුළත් කරන්න.
     TELEGRAM_TOKEN: '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A',
     CHAT_ID: '-1003111341307',
 };
