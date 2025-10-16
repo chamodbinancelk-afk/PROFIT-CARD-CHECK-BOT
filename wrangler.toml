@@ -1,7 +1,6 @@
 name = "cfnewseconomic2000"
-# 💡 FIX: main ක්ෂේත්‍රය index.mjs ලෙස වෙනස් කරන්න
 main = "index.mjs" 
-compatibility_date = "2025-10-12" 
+compatibility_date = "2025-10-12"
 
 compatibility_flags = ["nodejs_compat"]
 
