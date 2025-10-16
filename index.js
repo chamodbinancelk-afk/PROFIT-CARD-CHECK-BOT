@@ -8,7 +8,10 @@ import moment from 'moment-timezone';
 
 const HARDCODED_CONFIG = {
     TELEGRAM_TOKEN: '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A',
-    CHAT_ID: '-1003111341307',
+    CHAT_ID: '-1003111341307', // Main Channel ID
+    
+    // 🔴 NEW: YOUR (OWNER'S) TELEGRAM USER ID (A number, e.g., 123456789)
+    OWNER_USER_ID: 1234567890, // ⚠️ මෙය ඔබගේ Telegram User ID එකෙන් ආදේශ කරන්න ⚠️
 };
 
 // --- NEW CONSTANTS FOR BUTTON (MUST BE SET!) ---
@@ -30,7 +33,13 @@ const FF_CALENDAR_URL = "https://www.forexfactory.com/calendar";
 // --- KV KEYS ---
 const LAST_ECONOMIC_EVENT_ID_KEY = 'last_economic_event_id';
 const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message';
-const PRICE_ACTION_PREFIX = 'PA_'; // 🆕 නව KV Prefix එක
+const PRICE_ACTION_PREFIX = 'PA_'; 
+
+// --- 🔴 NEW: UPCOMING NEWS ALERT KV KEY 🔴 ---
+const UPCOMING_ALERT_PREFIX = 'UA_';
+// 🔴 NEW: KV KEY for message waiting for approval
+const PENDING_APPROVAL_PREFIX = 'PENDING_';
+
 
 // =================================================================
 // --- UTILITY FUNCTIONS ---
@@ -38,23 +47,24 @@ const PRICE_ACTION_PREFIX = 'PA_'; // 🆕 නව KV Prefix එක
 
 /**
  * Sends a message to Telegram, using the hardcoded TELEGRAM_TOKEN.
+ * (Modified to allow replyToId only for CHANNEL messages)
  * @param {object} replyMarkup - Inline Keyboard object for Telegram API.
  */
 async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarkup = null, replyToId = null, env) {
     const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
+    const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
+    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
     
     if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN_HERE') {
         console.error("TELEGRAM_TOKEN is missing or placeholder.");
         return false;
     }
-    const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
     
     let currentImgUrl = imgUrl;
     let apiMethod = currentImgUrl ? 'sendPhoto' : 'sendMessage';
     let maxAttempts = 3;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        // Parse mode changed to HTML because the original code uses HTML tags
         let payload = { chat_id: chatId, parse_mode: 'HTML' }; 
 
         if (apiMethod === 'sendPhoto' && currentImgUrl) {
@@ -69,7 +79,9 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
             payload.reply_markup = replyMarkup;
         }
 
-        if (replyToId) {
+        // ⚠️ Modification: Reply is only allowed for group/private chat commands, 
+        // not for Owner's private message alerts, or channel posts.
+        if (replyToId && chatId !== CHAT_ID && chatId.toString() !== HARDCODED_CONFIG.OWNER_USER_ID.toString()) {
             payload.reply_to_message_id = replyToId;
             payload.allow_sending_without_reply = true;
         }
@@ -99,8 +111,15 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
                     continue;
                 }
                 console.error(`Telegram API Error (${apiMethod}): ${response.status} - ${errorText}`);
+                // If it's the owner's private chat and it fails, it means the bot is blocked.
+                if (chatId.toString() === HARDCODED_CONFIG.OWNER_USER_ID.toString()) {
+                    console.error("Owner's private message failed. Bot might be blocked or Owner ID is wrong.");
+                }
                 break;
             }
+            // ⚠️ NEW: Return the response JSON to get the sent message ID
+            const data = await response.json();
+            if (data.ok) return data.result; 
             return true; // Success
         } catch (error) {
             console.error("Error sending message to Telegram:", error);
@@ -152,6 +171,14 @@ async function writeKV(env, key, value, expirationTtl) {
         else if (key.startsWith(PRICE_ACTION_PREFIX)) { 
              options.expirationTtl = 86400; // 24 hours
         }
+        // Temporary storage for Upcoming Alerts (48 hours)
+        else if (key.startsWith(UPCOMING_ALERT_PREFIX)) {
+             options.expirationTtl = 172800; // 48 hours
+        }
+        // 🔴 NEW: Temporary storage for PENDING Approval (1 hour max)
+        else if (key.startsWith(PENDING_APPROVAL_PREFIX)) {
+             options.expirationTtl = 3600; // 1 hour
+        }
         
         // Custom TTL for others (like LAST_ECONOMIC_MESSAGE_KEY)
         if (expirationTtl !== undefined) {
@@ -165,23 +192,16 @@ async function writeKV(env, key, value, expirationTtl) {
 }
 
 
-/**
- * Checks if a user is a member of the specified CHAT_ID channel. (Required for /economic command)
- */
+// ... (Other Utility Functions: checkChannelMembership, fetchAndFormatPriceAction, sendPriceActionToUser, analyzeComparison, getLatestEconomicEvents are UNCHANGED) ...
 async function checkChannelMembership(userId, env) {
-    // ⚠️ Token එක Hardcode කරන නිසා env වලින් ලබා ගැනීම ඉවත් කර ඇත.
     const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
     const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
-
     if (!TELEGRAM_TOKEN || !CHAT_ID) return false;
-
     const url = `${TELEGRAM_API_URL}/getChatMember?chat_id=${CHAT_ID}&user_id=${userId}`;
-
     try {
         const response = await fetch(url);
         const data = await response.json();
-
         if (data.ok && data.result) {
             const status = data.result.status;
             if (status === 'member' || status === 'administrator' || status === 'creator') {
@@ -194,29 +214,13 @@ async function checkChannelMembership(userId, env) {
         return false;
     }
 }
-
-
-// =================================================================
-// --- 🆕 NEW PRICE ACTION HELPER FUNCTIONS 🆕 ---
-// =================================================================
-
-/**
- * 🆕 [PLACEHOLDER] Fetches real-time price action and formats the message.
- * !!! IMPORTANT: Replace this with your actual price API fetching logic. !!!
- * @param {object} event - The economic event data.
- * @returns {string} The formatted Price Action message.
- */
 async function fetchAndFormatPriceAction(event, env) {
-    // ⚠️ REPLACE THIS WITH ACTUAL API CALLS ⚠️
-    // Example Price Data Structure (Placeholder)
     const pair = event.currency + 'USD';
     const priceBefore = (Math.random() * 0.005 + 1.08000).toFixed(5);
     const priceAfter = (Math.random() * 0.005 + 1.08000).toFixed(5);
     const movement = ((priceAfter - priceBefore) * 100000).toFixed(0);
-
     const direction = movement >= 0 ? '🔺 Higher' : '🔻 Lower';
     const emoji = movement >= 0 ? '📈' : '📉';
-
     const priceMessage = 
         `<b>${emoji} Price Action Analysis for ${event.currency}</b>\n\n` +
         `💱 <b>Pair:</b> ${pair}\n` +
@@ -224,39 +228,25 @@ async function fetchAndFormatPriceAction(event, env) {
         `📊 <b>Pre-Release Price:</b> ${priceBefore}\n` +
         `📊 <b>Post-Release Price:</b> ${priceAfter}\n\n` +
         `<i>(This data is for illustration only. Please implement a reliable Forex Price API.)</i>`;
-
     return priceMessage;
 }
-
-/**
- * 🆕 Handles sending the Price Action message to the user's private chat.
- */
 async function sendPriceActionToUser(kvKey, targetChatId, callbackId, env) {
     const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
     const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
-
-    // 1. KV එකෙන් ගබඩා කළ Price Action Message එක ලබා ගැනීම
     const priceActionData = await readKV(env, `${PRICE_ACTION_PREFIX}${kvKey}`);
-
     let alertText = '✅ Price Action Details ඔබගේ Inbox එකට යැව්වා.';
-    
     if (!priceActionData) {
         alertText = '❌ Price Action Data කල් ඉකුත් වී ඇත, නැතහොත් සොයා ගැනීමට නොහැක.';
         await sendRawTelegramMessage(targetChatId, alertText, null, null, null, env);
     } else {
         const message = `<b>📈 Price Action Details</b>\n\n${priceActionData}`;
-
         try {
-            // 2. User ගේ Private Inbox එකට Message එක යැවීම
             await sendRawTelegramMessage(targetChatId, message, null, null, null, env);
         } catch (error) {
             console.error(`Error sending price action to ${targetChatId}:`, error);
-            // Error එකක් ආවොත් (බොට්ව Start කර නැතිනම් වැනි), User ට Alert එකක් පෙන්වීම
             alertText = '🚨 පළමුව බොට් එකට Private Message එකක් යවා /start කරන්න.';
         }
     }
-
-    // 3. Telegram API එකට "Alert Sent" බව දැනුම් දීම (Button එකේ Loading state එක ඉවත් කිරීමට)
     const answerUrl = `${TELEGRAM_API_URL}/answerCallbackQuery`;
     await fetch(answerUrl, {
         method: 'POST',
@@ -268,23 +258,14 @@ async function sendPriceActionToUser(kvKey, targetChatId, callbackId, env) {
         })
     });
 }
-
-
-// =================================================================
-// --- ECONOMIC CALENDAR LOGIC (MODIFIED) ---
-// =================================================================
-
 function analyzeComparison(actual, previous) {
-    // ... (Original analyzeComparison function is unchanged) ...
     try {
         const cleanAndParse = (value) => parseFloat(value.replace(/%|,|K|M|B/g, '').trim() || '0');
         const a = cleanAndParse(actual);
         const p = cleanAndParse(previous);
-
         if (isNaN(a) || isNaN(p) || actual.trim() === '-' || actual.trim() === '' || actual.toLowerCase().includes('holiday')) {
             return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
         }
-
         if (a > p) {
             return { comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`, reaction: "📈 Forex සහ Crypto වෙළඳපොළ ඉහළට යා හැකියි (ධනාත්මක බලපෑම්)" };
         } else if (a < p) {
@@ -297,34 +278,25 @@ function analyzeComparison(actual, previous) {
         return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
     }
 }
-
 async function getLatestEconomicEvents() {
-    // ... (Original getLatestEconomicEvents function is unchanged) ...
     const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
     if (!resp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${resp.status} on calendar page.`);
-
     const html = await resp.text();
     const $ = load(html);
     const rows = $('.calendar__row');
-
     const realizedEvents = [];
-    
     rows.each((i, el) => {
         const row = $(el);
         const eventId = row.attr("data-event-id");
         const actual = row.find(".calendar__actual").text().trim();
-        
         if (!eventId || !actual || actual === "-") return;
-        
         const currency_td = row.find(".calendar__currency");
         const title_td = row.find(".calendar__event");
         const previous_td = row.find(".calendar__previous");
         const impact_td = row.find('.calendar__impact');
         const time_td = row.find('.calendar__time');
-        
         let impactText = "Unknown";
         const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first();
-        
         if (impactElement.length > 0) {
             impactText = impactElement.attr('title') || "Unknown";
             if (impactText === "Unknown") {
@@ -335,7 +307,6 @@ async function getLatestEconomicEvents() {
                 else if (classList.includes('impact-icon--holiday')) impactText = "Non-Economic/Holiday";
             }
         }
-
         realizedEvents.push({
             id: eventId,
             currency: currency_td.text().trim(),
@@ -346,115 +317,318 @@ async function getLatestEconomicEvents() {
             time: time_td.text().trim()
         });
     });
-    
     return realizedEvents;
 }
 
+
+// =================================================================
+// --- UPCOMING NEWS SCRAPER & ALERT HANDLER (MODIFIED FOR APPROVAL) ---
+// =================================================================
+
 /**
- * 🆕 Modified to save Price Action to KV and send message with an inline button.
+ * Scrapes upcoming High Impact (Red Folder) events and stores them in KV. (UNCHANGED)
  */
-async function fetchEconomicNews(env) {
-    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
+async function scrapeUpcomingEvents(env) {
     try {
-        const events = await getLatestEconomicEvents();
+        const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
+        if (!resp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${resp.status} on calendar page.`);
+
+        const html = await resp.text();
+        const $ = load(html);
+        const rows = $('.calendar__row');
+
+        const tomorrow = moment().tz(COLOMBO_TIMEZONE).add(1, 'day').endOf('day');
+        let newAlertsCount = 0;
+
+        rows.each((i, el) => {
+            const row = $(el);
+            const eventId = row.attr("data-event-id");
+            const actual = row.find(".calendar__actual").text().trim();
+
+            if (!eventId || actual !== "-") return;
+            
+            const impact_td = row.find('.calendar__impact');
+            const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first();
+            
+            const classList = impactElement.attr('class') || "";
+            if (!classList.includes('impact-icon--high')) return; 
+
+            const currency = row.find(".calendar__currency").text().trim();
+            const title = row.find(".calendar__event").text().trim();
+            const time_str = row.find('.calendar__time').text().trim();
+            const date_str = row.prevAll('.calendar__row--day').first().find('.calendar__day').text().trim();
+            
+            let releaseMoment;
+            try {
+                releaseMoment = moment.tz(`${date_str} ${time_str}`, 'ddd MMM D YYYY h:mmA', 'UTC');
+                if (!releaseMoment.isValid()) {
+                    console.error(`Invalid date/time for event ${eventId}: ${date_str} ${time_str}`);
+                    return; 
+                }
+                const today = moment().tz(COLOMBO_TIMEZONE);
+                if(releaseMoment.year() < today.year()) releaseMoment.year(today.year());
+                
+            } catch (e) {
+                console.error(`Error parsing release time for ${eventId}:`, e);
+                return;
+            }
+            
+            const alertMoment = releaseMoment.clone().subtract(1, 'hour');
+            
+            const alertKVKey = UPCOMING_ALERT_PREFIX + eventId;
+            const existingAlert = await readKV(env, alertKVKey);
+
+            if (!existingAlert) {
+                if (releaseMoment.isBefore(tomorrow.add(1, 'day'))) {
+                    const alertData = {
+                        id: eventId,
+                        currency: currency,
+                        title: title,
+                        release_time_utc: releaseMoment.toISOString(),
+                        alert_time_utc: alertMoment.toISOString(),
+                        is_sent: false,
+                        is_approved: false // 🔴 NEW: Add approval status
+                    };
+                    await writeKV(env, alertKVKey, JSON.stringify(alertData));
+                    newAlertsCount++;
+                }
+            }
+        });
         
-        if (events.length === 0) {
-            console.info("[Economic Check] No events with Actual values found.");
-            return;
-        }
+        console.log(`[Alert Scheduler] Scraped and scheduled ${newAlertsCount} new High Impact Alerts.`);
 
-        let sentCount = 0;
-        let lastSentMessage = "";
+    } catch (error) {
+        console.error("[UPCOMING ALERT ERROR] Failed to scrape upcoming events:", error.stack);
+    }
+}
 
-        // Reverse the array to process older events first and ensure the latest is sent last
-        for (const event of events.reverse()) {
-            const eventKVKey = LAST_ECONOMIC_EVENT_ID_KEY + "_" + event.id;
-            const lastEventId = await readKV(env, eventKVKey);
+/**
+ * 🔴 MODIFIED: Checks for alerts. If time is right, sends the alert message 
+ * to the OWNER for approval instead of sending directly to the main channel.
+ */
+async function checkAndSendAlerts(env) {
+    const OWNER_USER_ID = HARDCODED_CONFIG.OWNER_USER_ID;
+    if (!OWNER_USER_ID) {
+        console.error("OWNER_USER_ID is missing in HARDCODED_CONFIG. Cannot send approval request.");
+        return;
+    }
+    
+    const now = moment.utc(); 
+    let sentCount = 0;
+
+    try {
+        const listResponse = await env.NEWS_STATE.list({ prefix: UPCOMING_ALERT_PREFIX });
+        
+        for (const key of listResponse.keys) {
+            const alertKVKey = key.name;
+            const alertDataStr = await readKV(env, alertKVKey);
             
-            if (event.id === lastEventId) continue;
+            if (!alertDataStr) continue;
             
-            await writeKV(env, eventKVKey, event.id);
+            const alertData = JSON.parse(alertDataStr);
 
-            const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
-            const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
+            // ⚠️ Check if already sent or already approved
+            if (alertData.is_sent || alertData.is_approved) continue; 
 
-            // --- 1. Main Channel Message (Short Version) ---
-            const mainMessage =
-                `<b>🚨 Economic Calendar Release 🔔</b>\n\n` +
-                `⏰ <b>Date & Time:</b> ${date_time}\n` +
-                `🕓 <b>Release Time:</b> ${event.time} (FF)\n\n` +
-                `🌍 <b>Currency:</b> ${event.currency}\n` +
-                `📌 <b>Headline:</b> ${event.title}\n\n` +
-                `📈 <b>Actual:</b> ${event.actual}\n` +
-                `📉 <b>Previous:</b> ${event.previous}\n\n` +
-                `🔍 <b>Details:</b> ${comparison}\n\n` +
-                `<b>📈 Market Reaction Forecast:</b> ${reaction}\n\n` +
-                `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
-
-            // --- 2. Fetch & Save Price Action to KV ---
-            const kvKeySuffix = `${event.currency}_${event.id}`;
-            const priceActionKVKey = `${PRICE_ACTION_PREFIX}${kvKeySuffix}`;
+            const alertTime = moment.utc(alertData.alert_time_utc);
             
-            // 🆕 Price Action Message එක ලබා ගැනීම (Placeholder)
-            const priceActionMessage = await fetchAndFormatPriceAction(event, env); 
-            
-            // 🆕 Price Action Message එක KV එකේ තාවකාලිකව Save කිරීම (24 hours TTL)
-            await writeKV(env, priceActionKVKey, priceActionMessage);
+            // Check if alert time is reached and is within the last 5 minutes
+            if (now.isSameOrAfter(alertTime) && now.clone().subtract(5, 'minutes').isBefore(alertTime)) {
+                
+                // --- 1. Construct Alert Message for OWNER Approval ---
+                const colomboReleaseTime = moment.utc(alertData.release_time_utc).tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
+                
+                const approvalMessage =
+                    `🚨 <b>APPROVAL REQUIRED: HIGH IMPACT NEWS ALERT</b> 🚨\n\n` +
+                    `⏱️ <b>Release Time:</b> ${colomboReleaseTime} (Colombo Time)\n` +
+                    `⏳ <b>Alert Time:</b> ${alertTime.tz(COLOMBO_TIMEZONE).format('hh:mm A')} (1 Hour Before)\n\n` +
+                    `🌍 <b>Currency:</b> ${alertData.currency}\n` +
+                    `📌 <b>Event:</b> ${alertData.title}\n\n` +
+                    `✅ <b>Action:</b> මෙම පුවත නිකුත් වීමට පැයකට පෙර Channel එකට යැවීමට පහත බොත්තම ඔබන්න.`;
+                
+                // 2. Create Approval Button
+                const approvalReplyMarkup = {
+                    inline_keyboard: [
+                        [{
+                            text: '✅ Confirm and Send to Channel',
+                            // The callback data will be the Event ID
+                            callback_data: `APPROVE:${alertData.id}` 
+                        }]
+                    ]
+                };
 
-            // --- 3. Create Inline Button ---
-            const replyMarkup = {
-                inline_keyboard: [
-                    [{ 
-                        text: "View Price Action 📈", 
-                        // Callback Data එක ලෙස Price Action KV Key Suffix එක යවමු.
-                        callback_data: `PA_VIEW:${kvKeySuffix}` 
-                    }]
-                ]
-            };
-            
-            // Hardcoded Token නිසා, env යැවුවත් sendRawTelegramMessage ශ්‍රිතය එය භාවිතා නොකරයි
-            const sendSuccess = await sendRawTelegramMessage(CHAT_ID, mainMessage, null, replyMarkup, null, env);
-
-            if (sendSuccess) {
-                lastSentMessage = mainMessage;
-                sentCount++;
+                // 3. Send to Owner's Private Chat
+                const sentMessage = await sendRawTelegramMessage(OWNER_USER_ID, approvalMessage, null, approvalReplyMarkup, null, env);
+                
+                if (sentMessage && sentMessage.message_id) {
+                    // 4. Update KV to mark as 'sent for approval'
+                    alertData.is_sent = true; // Mark as sent to Owner
+                    
+                    // 🔴 NEW: Store the full message content and the owner's message ID 
+                    // in a temporary KV key for easy retrieval upon approval. (1 Hour TTL)
+                    const pendingKey = PENDING_APPROVAL_PREFIX + alertData.id;
+                    const pendingData = {
+                        originalMessage: approvalMessage, // Store the message content
+                        ownerMessageId: sentMessage.message_id,
+                        eventId: alertData.id
+                    };
+                    await writeKV(env, pendingKey, JSON.stringify(pendingData));
+                    
+                    // Update the main alert KV key
+                    await writeKV(env, alertKVKey, JSON.stringify(alertData)); 
+                    
+                    sentCount++;
+                    console.log(`[Alert Sent for Approval] Event ID: ${alertData.id}. Waiting for Owner's approval.`);
+                }
             }
         }
         
         if (sentCount > 0) {
-            await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, lastSentMessage);
-            console.log(`[Economic Success] Found and sent ${sentCount} new events. Saved latest to KV.`);
+            console.log(`[Alert Checker] Sent ${sentCount} scheduled alerts for owner approval.`);
         } else {
-            console.log(`[Economic Success] No new events found to send.`);
+            console.log(`[Alert Checker] No alerts triggered for approval at this time.`);
         }
 
     } catch (error) {
-        console.error("[ECONOMIC ERROR] A CRITICAL error occurred during ECONOMIC task:", error.stack);
+        console.error("[ALERT CHECKER ERROR] Failed to check and send alerts for approval:", error.stack);
     }
 }
 
 
 // =================================================================
-// --- TELEGRAM WEBHOOK HANDLER (Economic Commands & Callbacks) ---
+// --- TELEGRAM WEBHOOK HANDLER (MODIFIED FOR APPROVAL CALLBACK) ---
 // =================================================================
 
 /**
- * 🆕 Handles incoming Telegram updates, including /commands AND Callback Queries (Button Clicks).
+ * 🔴 MODIFIED: Handles incoming Telegram updates, including /commands AND Callback Queries (Button Clicks).
  */
 async function handleTelegramUpdate(update, env) {
+    const OWNER_USER_ID = HARDCODED_CONFIG.OWNER_USER_ID;
+    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
+    const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
+    const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
+
+
     // --- 1. Handle Callback Query (Button Clicks) ---
     if (update.callback_query) {
         const callbackQuery = update.callback_query;
         const callbackData = callbackQuery.data;
-        const targetChatId = callbackQuery.from.id; // Button එක ක්ලික් කළ User ගේ Private Chat ID
+        const targetChatId = callbackQuery.from.id; 
+        const callbackId = callbackQuery.id;
 
-        // PA_VIEW: [KV Key Suffix] එකක්දැයි පරීක්ෂා කිරීම
+        // --- A. Price Action Button (PA_VIEW) ---
         if (callbackData.startsWith('PA_VIEW:')) {
             const kvKeySuffix = callbackData.replace('PA_VIEW:', '');
-            const callbackId = callbackQuery.id; // answerCallbackQuery සඳහා අවශ්‍යයි
-
             await sendPriceActionToUser(kvKeySuffix, targetChatId, callbackId, env);
-            // answerCallbackQuery යැවූ නිසා, මෙතැනින් Response එකක් දිය යුතු නැත
+            return;
+        }
+
+        // --- B. 🔴 NEW: Approval Button (APPROVE) ---
+        if (callbackData.startsWith('APPROVE:')) {
+            const eventId = callbackData.replace('APPROVE:', '');
+            
+            // 1. Only the Owner can approve
+            if (targetChatId.toString() !== OWNER_USER_ID.toString()) {
+                await fetch(answerUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        callback_query_id: callbackId,
+                        text: '🚫 Access Denied. Only the bot owner can approve this alert.',
+                        show_alert: true
+                    })
+                });
+                return;
+            }
+
+            const pendingKey = PENDING_APPROVAL_PREFIX + eventId;
+            const alertKVKey = UPCOMING_ALERT_PREFIX + eventId;
+
+            const pendingDataStr = await readKV(env, pendingKey);
+            const alertDataStr = await readKV(env, alertKVKey);
+
+            if (!pendingDataStr || !alertDataStr) {
+                // Remove button state and show error if data is missing
+                 await fetch(answerUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        callback_query_id: callbackId,
+                        text: '❌ Alert Data is missing or expired. Cannot proceed.',
+                        show_alert: true
+                    })
+                });
+                 await editMessage(targetChatId, callbackQuery.message.message_id, "❌ **ALERT EXPIRED/CANCELLED** ❌", null, env);
+                return;
+            }
+            
+            const pendingData = JSON.parse(pendingDataStr);
+            let alertData = JSON.parse(alertDataStr);
+
+            if (alertData.is_approved) {
+                 await fetch(answerUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        callback_query_id: callbackId,
+                        text: '✅ This alert has already been approved.',
+                        show_alert: false
+                    })
+                });
+                return;
+            }
+
+
+            // 2. Format Final Message for Channel (Remove Approval-specific text)
+            // (Final Channel Message is the same as the approval message, but we update the text)
+            const finalMessage = pendingData.originalMessage.replace(
+                '🚨 <b>APPROVAL REQUIRED: HIGH IMPACT NEWS ALERT</b> 🚨', 
+                '⚠️ <b>HIGH IMPACT NEWS ALERT 🔔</b>'
+            ).replace(
+                '✅ <b>Action:</b> මෙම පුවත නිකුත් වීමට පැයකට පෙර Channel එකට යැවීමට පහත බොත්තම ඔබන්න.',
+                '⛔ <b>Trading Warning:</b> මෙම පුවත නිකුත් වන අවස්ථාවේදී වෙළඳපොළේ විශාල උච්චාවචනයක් (Volatility) ඇති විය හැක. අවදානම් කළමනාකරණය ඉතා වැදගත් වේ.'
+            );
+            
+            // 3. Send to Main Channel
+            const sendSuccess = await sendRawTelegramMessage(CHAT_ID, finalMessage, null, null, null, env);
+
+            if (sendSuccess) {
+                // 4. Update KV states (Mark as approved, and delete pending key)
+                alertData.is_approved = true;
+                await writeKV(env, alertKVKey, JSON.stringify(alertData));
+                await env.NEWS_STATE.delete(pendingKey);
+                
+                // 5. Edit Owner's Message to confirm approval and remove button
+                await editMessage(
+                    targetChatId, 
+                    callbackQuery.message.message_id, 
+                    finalMessage + "\n\n<b>✅ APPROVED & SENT TO CHANNEL</b>", 
+                    null, 
+                    env
+                );
+
+                // 6. Answer the callback query (Hides the loading state)
+                await fetch(answerUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        callback_query_id: callbackId,
+                        text: `✅ Alert ${eventId} Approved and Sent to Channel.`,
+                        show_alert: false
+                    })
+                });
+                
+            } else {
+                 await fetch(answerUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        callback_query_id: callbackId,
+                        text: '❌ Channel එකට යැවීමේදී දෝෂයක්. (Bot admin නොවිය හැක).',
+                        show_alert: true
+                    })
+                });
+            }
             return;
         }
     }
@@ -464,13 +638,43 @@ async function handleTelegramUpdate(update, env) {
         return;
     }
     
-    // (Original handleTelegramUpdate logic - Renamed to handleCommands for clarity)
     await handleCommands(update, env);
 }
 
 /**
- * Original command handling logic.
+ * 🔴 NEW: Helper function to edit the message (to remove the button)
  */
+async function editMessage(chatId, messageId, text, replyMarkup, env) {
+    const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
+    const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
+    const url = `${TELEGRAM_API_URL}/editMessageText`;
+
+    const payload = {
+        chat_id: chatId,
+        message_id: messageId,
+        text: text,
+        parse_mode: 'HTML',
+        reply_markup: replyMarkup // null or empty object removes the markup
+    };
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+            console.error(`Error editing message: ${response.status} - ${await response.text()}`);
+        }
+        return response.ok;
+    } catch (e) {
+        console.error("Error editing message:", e);
+        return false;
+    }
+}
+
+
+// ... (handleCommands function is UNCHANGED) ...
 async function handleCommands(update, env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
 
@@ -543,11 +747,17 @@ async function handleCommands(update, env) {
 
 
 // =================================================================
-// --- CLOUDFLARE WORKER HANDLERS (MODIFIED) ---
+// --- CLOUDFLARE WORKER HANDLERS (UNCHANGED) ---
 // =================================================================
 
 async function handleScheduledTasks(env) {
-    // ECONOMIC CALENDAR EVENTS පමණක්
+    // 1. **NEWS RELEASE ALERT** - Check and send the alert message 1 hour before the release (TO OWNER).
+    await checkAndSendAlerts(env); 
+    
+    // 2. **UPCOMING NEWS SCRAPER** - Scrape new High Impact events and schedule alerts.
+    await scrapeUpcomingEvents(env); 
+
+    // 3. **REALIZED NEWS** - Scrape and send news that has ALREADY BEEN RELEASED.
     await fetchEconomicNews(env);
 }
 
@@ -579,7 +789,6 @@ export default {
                 const testMessage = `<b>✅ Economic Message Test Successful!</b>\n\nThis message confirms that:\n1. KV read/write is working.\n2. Telegram command logic is functional.\n\nNow try the <code>/economic</code> command in Telegram!`;
                 await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, testMessage);
                 
-                // Run the main scheduled tasks to fetch actual data
                 await handleScheduledTasks(env);
                 
                 return new Response("Scheduled task (Economic News) manually triggered and KV Test Message saved. Check your Telegram channel and Worker Logs.", { status: 200 });
@@ -602,10 +811,8 @@ export default {
                 console.log("--- WEBHOOK REQUEST RECEIVED (POST) ---");
                 const update = await request.json();
                 
-                // 🆕 New Handler for both commands and callback queries
                 ctx.waitUntil(handleTelegramUpdate(update, env)); 
                 
-                // Telegram API requires a fast 200 OK response for Webhook
                 return new Response('OK', { status: 200 });
             }
 
