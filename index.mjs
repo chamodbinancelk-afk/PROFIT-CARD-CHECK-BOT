@@ -1,4 +1,6 @@
 // --- ES MODULE IMPORTS (Required for Cloudflare Workers) ---
+// Note: 'require' is not standard in ES Modules but works here due to Wrangler's bundling and nodejs_compat.
+// For true ES Module syntax, you would use: import { load } from 'cheerio';
 const { load } = require('cheerio');
 const moment = require('moment-timezone');
 
@@ -615,7 +617,7 @@ async function handleCommands(update, env) {
 }
 
 // =================================================================
-// --- CLOUDFLARE WORKER HANDLERS (CommonJS Export) ---
+// --- CLOUDFLARE WORKER HANDLERS (ES Module Export) ---
 // =================================================================
 
 async function handleScheduledTasks(env) {
@@ -624,8 +626,8 @@ async function handleScheduledTasks(env) {
     await fetchEconomicNews(env);
 }
 
-// Export using module.exports for CommonJS compatibility
-module.exports = {
+// Export using ES Module compatibility (REQUIRED for .mjs files)
+export default {
     async scheduled(event, env, ctx) {
         ctx.waitUntil(
             (async () => {
