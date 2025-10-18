@@ -12,7 +12,7 @@ const HARDCODED_CONFIG = {
     CHAT_ID: '-1003111341307',
 };
 
-// --- NEW CONSTANTS FOR BUTTON (MUST BE SET!) ---
+// --- CONSTANTS FOR CHANNEL LINK BUTTON ---
 const CHANNEL_USERNAME = 'C_F_News';
 const CHANNEL_LINK_TEXT = 'C F NEWS ₿';
 const CHANNEL_LINK_URL = `https://t.me/${CHANNEL_USERNAME}`;
@@ -26,22 +26,23 @@ const HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
 };
 
+// FF Calendar URL එකෙහි 'filter' නොමැති නිසා, එය පෙරනිමි කාල කලාපය (GMT-5) සහ දිනට අනුව දත්ත ලබා දෙයි.
 const FF_CALENDAR_URL = "https://www.forexfactory.com/calendar";
 
 // --- KV KEYS ---
 const LAST_ECONOMIC_EVENT_ID_KEY = 'last_economic_event_id';
 const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message';
-const PRICE_ACTION_PREFIX = 'PA_'; // 🆕 නව KV Prefix එක
+
+// 🆕 පෙර දැනුම්දීම් සඳහා නව යතුරක් (3 days TTL)
+const LAST_PRE_ALERT_EVENT_ID_KEY = 'last_pre_alert_event_id'; 
+const PRE_ALERT_TTL_SECONDS = 259200; // 3 Days TTL for Pre-Alert
 
 // =================================================================
-// --- UTILITY FUNCTIONS ---
+// --- UTILITY FUNCTIONS (UNCHANGED) ---
 // =================================================================
 
-/**
- * Sends a message to Telegram, using the hardcoded TELEGRAM_TOKEN.
- * @param {object} replyMarkup - Inline Keyboard object for Telegram API.
- */
 async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarkup = null, replyToId = null, env) {
+    // ... (Original sendRawTelegramMessage function - unchanged) ...
     const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
     
     if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN_HERE') {
@@ -55,7 +56,6 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
     let maxAttempts = 3;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        // Parse mode changed to HTML because the original code uses HTML tags
         let payload = { chat_id: chatId, parse_mode: 'HTML' }; 
 
         if (apiMethod === 'sendPhoto' && currentImgUrl) {
@@ -112,11 +112,8 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
     return false;
 }
 
-
-/**
- * Reads data from the KV Namespace, assuming it is bound as env.NEWS_STATE.
- */
 async function readKV(env, key) {
+    // ... (Original readKV function - unchanged) ...
     try {
         if (!env.NEWS_STATE) {
             console.error("KV Binding 'NEWS_STATE' is missing in ENV.");
@@ -133,11 +130,8 @@ async function readKV(env, key) {
     }
 }
 
-/**
- * Writes data to the KV Namespace, assuming it is bound as env.NEWS_STATE.
- * @param {number} [expirationTtl] - Time to live in seconds for the key.
- */
 async function writeKV(env, key, value, expirationTtl) {
+    // ... (Original writeKV function - MODIFIED to handle new PRE_ALERT key) ...
     try {
         if (!env.NEWS_STATE) {
             console.error("KV Binding 'NEWS_STATE' is missing in ENV. Write failed.");
@@ -145,13 +139,14 @@ async function writeKV(env, key, value, expirationTtl) {
         }
         
         let options = {};
+        
         // Permanent storage for last event ID (30 days)
         if (key.startsWith(LAST_ECONOMIC_EVENT_ID_KEY)) {
             options.expirationTtl = 2592000;
         } 
-        // Temporary storage for Price Action (24 hours)
-        else if (key.startsWith(PRICE_ACTION_PREFIX)) { 
-             options.expirationTtl = 86400; // 24 hours
+        // 🆕 Pre-Alert KV Key (3 Days TTL)
+        else if (key.startsWith(LAST_PRE_ALERT_EVENT_ID_KEY)) { 
+             options.expirationTtl = PRE_ALERT_TTL_SECONDS; 
         }
         
         // Custom TTL for others (like LAST_ECONOMIC_MESSAGE_KEY)
@@ -165,12 +160,8 @@ async function writeKV(env, key, value, expirationTtl) {
     }
 }
 
-
-/**
- * Checks if a user is a member of the specified CHAT_ID channel. (Required for /economic command)
- */
 async function checkChannelMembership(userId, env) {
-    // ⚠️ Token එක Hardcode කරන නිසා env වලින් ලබා ගැනීම ඉවත් කර ඇත.
+    // ... (Original checkChannelMembership function - unchanged) ...
     const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
     const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
@@ -198,85 +189,11 @@ async function checkChannelMembership(userId, env) {
 
 
 // =================================================================
-// --- 🆕 NEW PRICE ACTION HELPER FUNCTIONS 🆕 ---
-// =================================================================
-
-/**
- * 🆕 [PLACEHOLDER] Fetches real-time price action and formats the message.
- * !!! IMPORTANT: Replace this with your actual price API fetching logic. !!!
- * @param {object} event - The economic event data.
- * @returns {string} The formatted Price Action message.
- */
-async function fetchAndFormatPriceAction(event, env) {
-    // ⚠️ REPLACE THIS WITH ACTUAL API CALLS ⚠️
-    // Example Price Data Structure (Placeholder)
-    const pair = event.currency + 'USD';
-    const priceBefore = (Math.random() * 0.005 + 1.08000).toFixed(5);
-    const priceAfter = (Math.random() * 0.005 + 1.08000).toFixed(5);
-    const movement = ((priceAfter - priceBefore) * 100000).toFixed(0);
-
-    const direction = movement >= 0 ? '🔺 Higher' : '🔻 Lower';
-    const emoji = movement >= 0 ? '📈' : '📉';
-
-    const priceMessage = 
-        `<b>${emoji} Price Action Analysis for ${event.currency}</b>\n\n` +
-        `💱 <b>Pair:</b> ${pair}\n` +
-        `📉 <b>Movement:</b> ${movement} Pips ${direction}\n\n` +
-        `📊 <b>Pre-Release Price:</b> ${priceBefore}\n` +
-        `📊 <b>Post-Release Price:</b> ${priceAfter}\n\n` +
-        `<i>(This data is for illustration only. Please implement a reliable Forex Price API.)</i>`;
-
-    return priceMessage;
-}
-
-/**
- * 🆕 Handles sending the Price Action message to the user's private chat.
- */
-async function sendPriceActionToUser(kvKey, targetChatId, callbackId, env) {
-    const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
-    const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
-
-    // 1. KV එකෙන් ගබඩා කළ Price Action Message එක ලබා ගැනීම
-    const priceActionData = await readKV(env, `${PRICE_ACTION_PREFIX}${kvKey}`);
-
-    let alertText = '✅ Price Action Details ඔබගේ Inbox එකට යැව්වා.';
-    
-    if (!priceActionData) {
-        alertText = '❌ Price Action Data කල් ඉකුත් වී ඇත, නැතහොත් සොයා ගැනීමට නොහැක.';
-        await sendRawTelegramMessage(targetChatId, alertText, null, null, null, env);
-    } else {
-        const message = `<b>📈 Price Action Details</b>\n\n${priceActionData}`;
-
-        try {
-            // 2. User ගේ Private Inbox එකට Message එක යැවීම
-            await sendRawTelegramMessage(targetChatId, message, null, null, null, env);
-        } catch (error) {
-            console.error(`Error sending price action to ${targetChatId}:`, error);
-            // Error එකක් ආවොත් (බොට්ව Start කර නැතිනම් වැනි), User ට Alert එකක් පෙන්වීම
-            alertText = '🚨 පළමුව බොට් එකට Private Message එකක් යවා /start කරන්න.';
-        }
-    }
-
-    // 3. Telegram API එකට "Alert Sent" බව දැනුම් දීම (Button එකේ Loading state එක ඉවත් කිරීමට)
-    const answerUrl = `${TELEGRAM_API_URL}/answerCallbackQuery`;
-    await fetch(answerUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            callback_query_id: callbackId,
-            text: alertText,
-            show_alert: alertText.startsWith('🚨')
-        })
-    });
-}
-
-
-// =================================================================
-// --- ECONOMIC CALENDAR LOGIC (MODIFIED) ---
+// --- ECONOMIC CALENDAR LOGIC (CLEANED) ---
 // =================================================================
 
 function analyzeComparison(actual, previous) {
-    // ... (Original analyzeComparison function is unchanged) ...
+    // ... (Original analyzeComparison function - unchanged) ...
     try {
         const cleanAndParse = (value) => parseFloat(value.replace(/%|,|K|M|B/g, '').trim() || '0');
         const a = cleanAndParse(actual);
@@ -299,8 +216,12 @@ function analyzeComparison(actual, previous) {
     }
 }
 
-async function getLatestEconomicEvents() {
-    // ... (Original getLatestEconomicEvents function is unchanged) ...
+
+/**
+ * 🆕 [UPDATED] Scrapes ALL events (Upcoming and Realized) for Today and Tomorrow 
+ * and returns them with a calculated timestamp (based on FF's server time + offset).
+ */
+async function getCalendarEvents() {
     const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
     if (!resp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${resp.status} on calendar page.`);
 
@@ -308,67 +229,207 @@ async function getLatestEconomicEvents() {
     const $ = load(html);
     const rows = $('.calendar__row');
 
-    const realizedEvents = [];
+    const events = [];
+    let currentDateStr = moment().tz(COLOMBO_TIMEZONE).format('YYYYMMDD'); // Start with today
     
     rows.each((i, el) => {
         const row = $(el);
         const eventId = row.attr("data-event-id");
-        const actual = row.find(".calendar__actual").text().trim();
         
-        if (!eventId || !actual || actual === "-") return;
+        if (!eventId) return;
+
+        // 1. Date (If it's a new day row)
+        const dateElement = row.find('td.calendar__day span.date');
+        if (dateElement.length > 0) {
+            // FF date format: Fri Dec 25
+            const ffDateStr = dateElement.text().trim() + ' ' + moment().tz(COLOMBO_TIMEZONE).year();
+            
+            // Try to parse the date string (e.g., 'Fri Oct 18 2024')
+            const parsedDate = moment.tz(ffDateStr, 'ddd MMM D YYYY', COLOMBO_TIMEZONE);
+            if (parsedDate.isValid()) {
+                 currentDateStr = parsedDate.format('YYYYMMDD');
+            }
+        }
         
         const currency_td = row.find(".calendar__currency");
         const title_td = row.find(".calendar__event");
-        const previous_td = row.find(".calendar__previous");
-        const impact_td = row.find('.calendar__impact');
         const time_td = row.find('.calendar__time');
+        const actual_td = row.find(".calendar__actual");
+        const previous_td = row.find(".calendar__previous");
+        const forecast_td = row.find(".calendar__forecast");
+        const impact_td = row.find('.calendar__impact');
         
+        const timeStr = time_td.text().trim();
+        const actualStr = actual_td.text().trim();
+        const previousStr = previous_td.text().trim() || "0";
+        const forecastStr = forecast_td.text().trim() || "N/A";
+
+        // 2. Impact parsing
         let impactText = "Unknown";
         const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first();
         
         if (impactElement.length > 0) {
             impactText = impactElement.attr('title') || "Unknown";
-            if (impactText === "Unknown") {
-                const classList = impactElement.attr('class') || "";
-                if (classList.includes('impact-icon--high')) impactText = "High Impact Expected";
-                else if (classList.includes('impact-icon--medium')) impactText = "Medium Impact Expected";
-                else if (classList.includes('impact-icon--low')) impactText = "Low Impact Expected";
-                else if (classList.includes('impact-icon--holiday')) impactText = "Non-Economic/Holiday";
+            const classList = impactElement.attr('class') || "";
+            if (classList.includes('impact-icon--high')) impactText = "High Impact Expected";
+            else if (classList.includes('impact-icon--medium')) impactText = "Medium Impact Expected";
+            else if (classList.includes('impact-icon--low')) impactText = "Low Impact Expected";
+            else if (classList.includes('impact-icon--holiday')) impactText = "Non-Economic/Holiday";
+        }
+        
+        // 3. Calculating the Event Time in Colombo Timezone
+        let eventTime = null;
+        if (timeStr && timeStr !== "All Day" && timeStr !== "Tentative") {
+            // FF displays time in a specific format (e.g., 8:30am) and based on their set timezone.
+            // We use the 'data-timestamp' attribute which is in Unix milliseconds 
+            // and adjust it to Colombo Time.
+            
+            // Forex Factory usually uses the *client's time* for the 'time' column, 
+            // but the row's 'data-timestamp' (if available) is more reliable for calculation.
+            const timestampMs = row.attr('data-timestamp');
+            if (timestampMs) {
+                // FF timestamp is usually *UTC* adjusted to the user's settings. We rely on it being close to UTC.
+                eventTime = moment.unix(timestampMs / 1000).tz(COLOMBO_TIMEZONE);
+            } else {
+                // Fallback: If no timestamp, try parsing using the scraped date and time string. 
+                // This is less reliable due to unknown FF server timezone.
+                try {
+                     const dateTimeStr = currentDateStr + ' ' + timeStr;
+                     eventTime = moment.tz(dateTimeStr, 'YYYYMMDD h:mma', COLOMBO_TIMEZONE);
+                } catch(e) {
+                    console.error("Time parsing fallback failed:", e);
+                }
             }
         }
 
-        realizedEvents.push({
+
+        events.push({
             id: eventId,
             currency: currency_td.text().trim(),
             title: title_td.text().trim(),
-            actual: actual,
-            previous: previous_td.text().trim() || "0",
+            actual: actualStr,
+            previous: previousStr,
+            forecast: forecastStr,
             impact: impactText,
-            time: time_td.text().trim()
+            timeStr: timeStr, // The raw time text from FF
+            eventTime: eventTime // moment object in COLOMBO_TIMEZONE
         });
     });
     
-    return realizedEvents;
+    // We filter out only events for today and tomorrow that have a scheduled time.
+    const today = moment().tz(COLOMBO_TIMEZONE).startOf('day');
+    const tomorrow = moment().tz(COLOMBO_TIMEZONE).add(1, 'days').startOf('day');
+    
+    return events.filter(event => 
+        event.eventTime && 
+        (event.eventTime.isSame(today, 'day') || event.eventTime.isSame(tomorrow, 'day'))
+    );
 }
 
+
+// =================================================================
+// --- 🆕 NEW PRE-ALERT LOGIC ---
+// =================================================================
+
 /**
- * 🆕 Modified to save Price Action to KV and send message with an inline button.
+ * 🆕 Fetches upcoming events and sends a pre-alert 1 hour before the release time.
+ */
+async function fetchUpcomingNewsForAlerts(env) {
+    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
+    
+    try {
+        const events = await getCalendarEvents();
+        
+        if (events.length === 0) {
+            console.info("[Pre-Alert Check] No upcoming events found for today/tomorrow.");
+            return;
+        }
+        
+        const now = moment().tz(COLOMBO_TIMEZONE);
+        let sentCount = 0;
+
+        for (const event of events) {
+            const preAlertKVKey = LAST_PRE_ALERT_EVENT_ID_KEY + "_" + event.id;
+            const lastAlertId = await readKV(env, preAlertKVKey);
+            
+            // Check if alert has already been sent for this event
+            if (event.id === lastAlertId) continue;
+            
+            // Calculate Pre-Alert Time (1 hour before the event)
+            const alertTime = event.eventTime.clone().subtract(1, 'hour');
+            
+            // Check if the current time is after the Alert Time AND before the Event Time
+            const isAlertWindow = now.isAfter(alertTime) && now.isBefore(event.eventTime);
+
+            if (isAlertWindow) {
+                // --- Pre-Alert Message ---
+                const eventDay = event.eventTime.format('YYYY-MM-DD');
+                const releaseTime = event.eventTime.format('hh:mm A');
+                
+                const alertMessage =
+                    `🔔 <b>Upcoming Economic News Alert!</b>\n\n` +
+                    `⚠️ <b>Alert:</b> මෙම සිදුවීමට **විනාඩි 60 ට වඩා අඩු** කාලයක් ඉතිරිව ඇත!\n\n` +
+                    `📅 <b>Date:</b> ${eventDay} (SL Time)\n` +
+                    `⏰ <b>Release Time:</b> ${releaseTime} (SL Time)\n\n` +
+                    `🌍 <b>Currency:</b> ${event.currency}\n` +
+                    `📌 <b>Headline:</b> ${event.title}\n` +
+                    `💥 <b>Impact:</b> <b>${event.impact}</b>\n\n` +
+                    `📉 <b>Forecast:</b> ${event.forecast}\n` +
+                    `📉 <b>Previous:</b> ${event.previous}\n\n` +
+                    `<i>වෙළඳපොළ Volatility සඳහා සූදානම් වන්න.</i>`;
+                    
+                const replyMarkup = {
+                    inline_keyboard: [
+                        [{ 
+                            text: `🔥 ${CHANNEL_LINK_TEXT} < / >`, 
+                            url: CHANNEL_LINK_URL 
+                        }]
+                    ]
+                };
+
+                const sendSuccess = await sendRawTelegramMessage(CHAT_ID, alertMessage, null, replyMarkup, null, env);
+
+                if (sendSuccess) {
+                    await writeKV(env, preAlertKVKey, event.id, PRE_ALERT_TTL_SECONDS); // Save alert status with 3-day TTL
+                    sentCount++;
+                }
+            }
+        }
+        
+        if (sentCount > 0) {
+            console.log(`[Pre-Alert Success] Found and sent ${sentCount} new pre-alerts.`);
+        } else {
+            console.log(`[Pre-Alert Success] No new alerts found in the 1-hour window.`);
+        }
+
+    } catch (error) {
+        console.error("[PRE-ALERT ERROR] A CRITICAL error occurred during PRE-ALERT task:", error.stack);
+    }
+}
+
+
+// =================================================================
+// --- ACTUAL NEWS RELEASE LOGIC (REFACTORED) ---
+// =================================================================
+
+/**
+ * Checks for events that have just realized (Actual value is present).
  */
 async function fetchEconomicNews(env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
     try {
-        const events = await getLatestEconomicEvents();
+        const events = await getCalendarEvents(); // Use the same scraper function
         
-        if (events.length === 0) {
-            console.info("[Economic Check] No events with Actual values found.");
-            return;
-        }
+        if (events.length === 0) return;
 
         let sentCount = 0;
         let lastSentMessage = "";
 
         // Reverse the array to process older events first and ensure the latest is sent last
         for (const event of events.reverse()) {
+            // Only process if Actual value is present AND not a placeholder
+            if (!event.actual || event.actual === "-") continue; 
+
             const eventKVKey = LAST_ECONOMIC_EVENT_ID_KEY + "_" + event.id;
             const lastEventId = await readKV(env, eventKVKey);
             
@@ -379,11 +440,11 @@ async function fetchEconomicNews(env) {
             const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
             const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
 
-            // --- 1. Main Channel Message (Short Version) ---
+            // --- Main Channel Message (Actual Release) ---
             const mainMessage =
                 `<b>🚨 Economic Calendar Release 🔔</b>\n\n` +
                 `⏰ <b>Date & Time:</b> ${date_time}\n` +
-                `🕓 <b>Release Time:</b> ${event.time} (FF)\n\n` +
+                `🕓 <b>Release Time:</b> ${event.eventTime ? event.eventTime.format('hh:mm A') : event.timeStr} (SL Time)\n\n` +
                 `🌍 <b>Currency:</b> ${event.currency}\n` +
                 `📌 <b>Headline:</b> ${event.title}\n\n` +
                 `📈 <b>Actual:</b> ${event.actual}\n` +
@@ -392,28 +453,16 @@ async function fetchEconomicNews(env) {
                 `<b>📈 Market Reaction Forecast:</b> ${reaction}\n\n` +
                 `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
 
-            // --- 2. Fetch & Save Price Action to KV ---
-            const kvKeySuffix = `${event.currency}_${event.id}`;
-            const priceActionKVKey = `${PRICE_ACTION_PREFIX}${kvKeySuffix}`;
-            
-            // 🆕 Price Action Message එක ලබා ගැනීම (Placeholder)
-            const priceActionMessage = await fetchAndFormatPriceAction(event, env); 
-            
-            // 🆕 Price Action Message එක KV එකේ තාවකාලිකව Save කිරීම (24 hours TTL)
-            await writeKV(env, priceActionKVKey, priceActionMessage);
-
-            // --- 3. Create Inline Button ---
+            // --- Create Static Channel Link Inline Button ---
             const replyMarkup = {
                 inline_keyboard: [
                     [{ 
-                        text: "View Price Action 📈", 
-                        // Callback Data එක ලෙස Price Action KV Key Suffix එක යවමු.
-                        callback_data: `PA_VIEW:${kvKeySuffix}` 
+                        text: `🔥 ${CHANNEL_LINK_TEXT} < / >`, 
+                        url: CHANNEL_LINK_URL 
                     }]
                 ]
             };
             
-            // Hardcoded Token නිසා, env යැවුවත් sendRawTelegramMessage ශ්‍රිතය එය භාවිතා නොකරයි
             const sendSuccess = await sendRawTelegramMessage(CHAT_ID, mainMessage, null, replyMarkup, null, env);
 
             if (sendSuccess) {
@@ -424,55 +473,47 @@ async function fetchEconomicNews(env) {
         
         if (sentCount > 0) {
             await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, lastSentMessage);
-            console.log(`[Economic Success] Found and sent ${sentCount} new events. Saved latest to KV.`);
+            console.log(`[Actual Release Success] Found and sent ${sentCount} new events. Saved latest to KV.`);
         } else {
-            console.log(`[Economic Success] No new events found to send.`);
+            console.log(`[Actual Release Success] No new events found to send.`);
         }
 
     } catch (error) {
-        console.error("[ECONOMIC ERROR] A CRITICAL error occurred during ECONOMIC task:", error.stack);
+        console.error("[ACTUAL RELEASE ERROR] A CRITICAL error occurred during ACTUAL RELEASE task:", error.stack);
     }
 }
 
 
 // =================================================================
-// --- TELEGRAM WEBHOOK HANDLER (Economic Commands & Callbacks) ---
+// --- TELEGRAM WEBHOOK HANDLER (UNCHANGED) ---
 // =================================================================
 
-/**
- * 🆕 Handles incoming Telegram updates, including /commands AND Callback Queries (Button Clicks).
- */
 async function handleTelegramUpdate(update, env) {
-    // --- 1. Handle Callback Query (Button Clicks) ---
+    // ... (Original handleTelegramUpdate function - unchanged) ...
     if (update.callback_query) {
-        const callbackQuery = update.callback_query;
-        const callbackData = callbackQuery.data;
-        const targetChatId = callbackQuery.from.id; // Button එක ක්ලික් කළ User ගේ Private Chat ID
-
-        // PA_VIEW: [KV Key Suffix] එකක්දැයි පරීක්ෂා කිරීම
-        if (callbackData.startsWith('PA_VIEW:')) {
-            const kvKeySuffix = callbackData.replace('PA_VIEW:', '');
-            const callbackId = callbackQuery.id; // answerCallbackQuery සඳහා අවශ්‍යයි
-
-            await sendPriceActionToUser(kvKeySuffix, targetChatId, callbackId, env);
-            // answerCallbackQuery යැවූ නිසා, මෙතැනින් Response එකක් දිය යුතු නැත
-            return;
-        }
+        // Since we removed the Price Action button, we can safely ignore or send an answer
+        const callbackQueryId = update.callback_query.id;
+        const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
+        const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
+        
+        // Send a silent answer to dismiss the loading state of the button
+        await fetch(`${TELEGRAM_API_URL}/answerCallbackQuery`, {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({ callback_query_id: callbackQueryId, text: 'මෙම බොත්තම යාවත්කාලීන කර ඇත.', show_alert: false })
+        });
+        return;
     }
 
-    // --- 2. Handle Message Command (/start, /economic) ---
     if (!update.message || !update.message.text) {
         return;
     }
     
-    // (Original handleTelegramUpdate logic - Renamed to handleCommands for clarity)
     await handleCommands(update, env);
 }
 
-/**
- * Original command handling logic.
- */
 async function handleCommands(update, env) {
+    // ... (Original handleCommands function - unchanged) ...
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
 
     const text = update.message.text.trim();
@@ -482,7 +523,6 @@ async function handleCommands(update, env) {
     const messageId = update.message.message_id;
     const username = update.message.from.username || update.message.from.first_name;
 
-    // --- 1. MANDATORY MEMBERSHIP CHECK (Only for /economic) ---
     if (command === '/economic') {
         const isMember = await checkChannelMembership(userId, env);
 
@@ -507,7 +547,6 @@ async function handleCommands(update, env) {
         }
     }
 
-    // --- 2. COMMAND EXECUTION ---
     switch (command) {
         case '/start':
             const replyText =
@@ -548,13 +587,18 @@ async function handleCommands(update, env) {
 // =================================================================
 
 async function handleScheduledTasks(env) {
-    // ECONOMIC CALENDAR EVENTS පමණක්
+    // 🆕 1. Upcoming Pre-Alerts (News එන්න පැයකට කලින් Alert යැවීම)
+    await fetchUpcomingNewsForAlerts(env);
+    
+    // 2. Actual News Release (Actual අගය ආ පසු Alert යැවීම)
     await fetchEconomicNews(env);
 }
 
 export default {
     /**
      * Handles scheduled events (Cron trigger)
+     * NOTE: You MUST set the cron trigger to run frequently (e.g., every 5 minutes) 
+     * for the 1-hour pre-alert window to be checked reliably.
      */
     async scheduled(event, env, ctx) {
         ctx.waitUntil(
@@ -577,16 +621,11 @@ export default {
 
             // Manual trigger
             if (url.pathname === '/trigger') {
-                const testMessage = `<b>✅ Economic Message Test Successful!</b>\n\nThis message confirms that:\n1. KV read/write is working.\n2. Telegram command logic is functional.\n\nNow try the <code>/economic</code> command in Telegram!`;
-                await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, testMessage);
-                
-                // Run the main scheduled tasks to fetch actual data
                 await handleScheduledTasks(env);
-                
-                return new Response("Scheduled task (Economic News) manually triggered and KV Test Message saved. Check your Telegram channel and Worker Logs.", { status: 200 });
+                return new Response("Scheduled task (Pre-Alerts & Actual Release) manually triggered. Check your Telegram channel and Worker Logs.", { status: 200 });
             }
             
-            // Status check
+            // Status check (unchanged)
             if (url.pathname === '/status') {
                 const lastEconomicPreview = await readKV(env, LAST_ECONOMIC_MESSAGE_KEY);
                 
@@ -598,15 +637,13 @@ export default {
                 return new Response(statusMessage, { status: 200 });
             }
 
-            // Webhook Handling (for Telegram commands AND Callback Queries)
+            // Webhook Handling (unchanged)
             if (request.method === 'POST') {
                 console.log("--- WEBHOOK REQUEST RECEIVED (POST) ---");
                 const update = await request.json();
                 
-                // 🆕 New Handler for both commands and callback queries
                 ctx.waitUntil(handleTelegramUpdate(update, env)); 
                 
-                // Telegram API requires a fast 200 OK response for Webhook
                 return new Response('OK', { status: 200 });
             }
 
