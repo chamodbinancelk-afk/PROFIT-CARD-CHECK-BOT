@@ -144,33 +144,6 @@ async function writeKV(env, key, value, expirationTtl) {
     }
 }
 
-async function checkChannelMembership(userId, env) {
-    // ... (Original checkChannelMembership function) ...
-    const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
-    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
-    const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
-
-    if (!TELEGRAM_TOKEN || !CHAT_ID) return false;
-
-    const url = `${TELEGRAM_API_URL}/getChatMember?chat_id=${CHAT_ID}&user_id=${userId}`;
-
-    try {
-        const response = await fetch(url);
-        const data = await response.json();
-
-        if (data.ok && data.result) {
-            const status = data.result.status;
-            if (status === 'member' || status === 'administrator' || status === 'creator') {
-                return true;
-            }
-        }
-        return false;
-    } catch (error) {
-        console.error(`[Membership Check Error for user ${userId}]:`, error);
-        return false;
-    }
-}
-
 function analyzeComparison(actual, previous) {
     // ... (Original analyzeComparison function - unchanged) ...
     try {
@@ -198,6 +171,7 @@ function analyzeComparison(actual, previous) {
 
 /**
  * 🛠️ [MODIFIED] Impact Parsing Logic එක ශක්තිමත් කර ඇත.
+ * 🛠️ [MODIFIED] Date Filtering Logic එක දැඩි කර ඇත (Bot එක බොරු News Alert එවන්නේ නැති බවට සහතික කිරීම සඳහා).
  */
 async function getCalendarEvents() {
     const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
@@ -208,7 +182,13 @@ async function getCalendarEvents() {
     const rows = $('.calendar__row');
 
     const events = [];
-    let currentDateStr = moment().tz(COLOMBO_TIMEZONE).format('YYYYMMDD'); 
+    // අපි Scrape කරන වෙලාවේදී අද දවස මොකක්ද කියලා moment වලින් ගන්නවා.
+    const now = moment().tz(COLOMBO_TIMEZONE);
+    const todayStart = now.clone().startOf('day');
+    const tomorrowStart = now.clone().add(1, 'days').startOf('day');
+    
+    // මෙය row එකෙන් කියවන date එක තබා ගැනීමට පමණයි.
+    let currentDateStr = now.format('YYYYMMDD'); 
     
     rows.each((i, el) => {
         const row = $(el);
@@ -219,7 +199,8 @@ async function getCalendarEvents() {
         // 1. Date (If it's a new day row)
         const dateElement = row.find('td.calendar__day span.date');
         if (dateElement.length > 0) {
-            const ffDateStr = dateElement.text().trim() + ' ' + moment().tz(COLOMBO_TIMEZONE).year();
+            // FF date format: "Mon Oct 13"
+            const ffDateStr = dateElement.text().trim() + ' ' + now.year();
             const parsedDate = moment.tz(ffDateStr, 'ddd MMM D YYYY', COLOMBO_TIMEZONE);
             if (parsedDate.isValid()) {
                  currentDateStr = parsedDate.format('YYYYMMDD');
@@ -239,14 +220,14 @@ async function getCalendarEvents() {
         const previousStr = previous_td.text().trim() || "0";
         const forecastStr = forecast_td.text().trim() || "N/A";
 
-        // 2. 🛠️ IMPACT PARSING (MORE ROBUST)
-        let impactText = "Unknown";
+        // 2. 🛠️ IMPACT PARSING (MORE ROBUST LOGIC)
+        let impactText = "Unknown Impact";
         let impactClass = "unknown";
         const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first();
         
         if (impactElement.length > 0) {
-            // Option A: Read the 'title' attribute
-            impactText = impactElement.attr('title') || "Unknown";
+            // Option A: Read the 'title' attribute (Most reliable)
+            impactText = impactElement.attr('title') || "Unknown Impact";
             
             // Option B: Read the class list for better classification
             const classList = impactElement.attr('class') || "";
@@ -263,53 +244,60 @@ async function getCalendarEvents() {
                 impactText = "Non-Economic/Holiday";
                 impactClass = "holiday";
             }
+            // Fallback check if title contains impact level text
+            if (impactText.toLowerCase().includes('high')) impactClass = 'high';
+            else if (impactText.toLowerCase().includes('medium')) impactClass = 'medium';
+            else if (impactText.toLowerCase().includes('low')) impactClass = 'low';
+
         }
         
         // 3. Calculating the Event Time in Colombo Timezone
         let eventTime = null;
-        if (timeStr && timeStr !== "All Day" && timeStr !== "Tentative") {
-            const timestampMs = row.attr('data-timestamp');
-            if (timestampMs) {
-                eventTime = moment.unix(timestampMs / 1000).tz(COLOMBO_TIMEZONE);
-            } else {
-                // Fallback (Less Reliable)
-                try {
-                     const dateTimeStr = currentDateStr + ' ' + timeStr;
-                     eventTime = moment.tz(dateTimeStr, 'YYYYMMDD h:mma', COLOMBO_TIMEZONE);
-                } catch(e) {
-                    console.error("Time parsing fallback failed:", e);
-                }
+        let isTodayOrTomorrow = false;
+        
+        const timestampMs = row.attr('data-timestamp');
+        if (timestampMs) {
+            // MOST RELIABLE: Use FF's provided timestamp (UNIX ms)
+            eventTime = moment.unix(timestampMs / 1000).tz(COLOMBO_TIMEZONE);
+        } else if (timeStr && timeStr !== "All Day" && timeStr !== "Tentative") {
+            // Fallback (Less Reliable)
+            try {
+                 const dateTimeStr = currentDateStr + ' ' + timeStr;
+                 eventTime = moment.tz(dateTimeStr, 'YYYYMMDD h:mma', COLOMBO_TIMEZONE);
+            } catch(e) {
+                console.error("Time parsing fallback failed:", e);
             }
         }
+        
+        // 4. 🆕 STRICT DATE CHECK (To filter out old/irrelevant events)
+        if (eventTime) {
+             isTodayOrTomorrow = eventTime.isSameOrAfter(todayStart, 'day') && eventTime.isBefore(tomorrowStart.clone().add(1, 'day'), 'day');
+        }
 
-
-        events.push({
-            id: eventId,
-            currency: currency_td.text().trim(),
-            title: title_td.text().trim(),
-            actual: actualStr,
-            previous: previousStr,
-            forecast: forecastStr,
-            impact: impactText,
-            impactClass: impactClass, // 🆕 Added Impact Class for easy filtering/check
-            timeStr: timeStr, 
-            eventTime: eventTime 
-        });
+        if (eventTime && isTodayOrTomorrow) {
+            events.push({
+                id: eventId,
+                currency: currency_td.text().trim(),
+                title: title_td.text().trim(),
+                actual: actualStr,
+                previous: previousStr,
+                forecast: forecastStr,
+                impact: impactText,
+                impactClass: impactClass, 
+                timeStr: timeStr, 
+                eventTime: eventTime 
+            });
+        }
     });
     
     // We filter out only events for today and tomorrow that have a scheduled time.
-    const today = moment().tz(COLOMBO_TIMEZONE).startOf('day');
-    const tomorrow = moment().tz(COLOMBO_TIMEZONE).add(1, 'days').startOf('day');
-    
-    return events.filter(event => 
-        event.eventTime && 
-        (event.eventTime.isSame(today, 'day') || event.eventTime.isSame(tomorrow, 'day'))
-    );
+    // **The filtering is now done inside the loop using isTodayOrTomorrow for stricter control.**
+    return events;
 }
 
 
 /**
- * 🛠️ [MODIFIED] Pre-Alert Logic - Actual අගය නොමැති බව තහවුරු කර ගනී.
+ * 🛠️ [MODIFIED] Pre-Alert Logic Message Title වෙනස් කර ඇත.
  */
 async function fetchUpcomingNewsForAlerts(env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
@@ -326,14 +314,18 @@ async function fetchUpcomingNewsForAlerts(env) {
         let sentCount = 0;
 
         for (const event of events) {
-            // 🆕 CRITICAL CHECK: Actual අගය තිබේ නම්, එය "Upcoming" සිදුවීමක් නොවේ.
+            // CRITICAL CHECK 1: Actual අගය තිබේ නම්, එය "Upcoming" සිදුවීමක් නොවේ.
             if (event.actual && event.actual.trim() !== '-' && event.actual.trim() !== '') {
                 continue; 
             }
-            // "Holiday" සිදුවීම් සඳහා Alert අවශ්‍ය නැත.
+            // CRITICAL CHECK 2: "Holiday" සිදුවීම් සඳහා Alert අවශ්‍ය නැත.
             if (event.impactClass === 'holiday') {
                 continue; 
             }
+            // CRITICAL CHECK 3: සිදුවීම දැනටමත් සිදුවී ඇත්නම් (Event Time එක වර්තමාන වේලාවට වඩා අතීතයේ නම්) Alert අවශ්‍ය නැත.
+             if (event.eventTime.isSameOrBefore(now)) {
+                 continue;
+             }
             
             const preAlertKVKey = LAST_PRE_ALERT_EVENT_ID_KEY + "_" + event.id;
             const lastAlertId = await readKV(env, preAlertKVKey);
@@ -357,9 +349,10 @@ async function fetchUpcomingNewsForAlerts(env) {
                 else if (event.impactClass === 'medium') impactEmoji = "🟠🟠";
                 else if (event.impactClass === 'low') impactEmoji = "🟡";
 
+                // 🛠️ Message Title වෙනස් කර ඇත
                 const alertMessage =
-                    `🔔 <b>Upcoming Economic News Alert!</b> ${impactEmoji}\n\n` +
-                    `⚠️ <b>Alert:</b> මෙම සිදුවීමට **විනාඩි 60 ට වඩා අඩු** කාලයක් ඉතිරිව ඇත!\n\n` +
+                    `⚠️ <b>PRE-ALERT: Upcoming Economic News!</b> ⚠️ ${impactEmoji}\n\n` +
+                    `🚨 <b>Alert:</b> මෙම සිදුවීමට **විනාඩි 60 ට වඩා අඩු** කාලයක් ඉතිරිව ඇත!\n\n` +
                     `📅 <b>Date:</b> ${eventDay} (SL Time)\n` +
                     `⏰ <b>Release Time:</b> ${releaseTime} (SL Time)\n\n` +
                     `🌍 <b>Currency:</b> ${event.currency}\n` +
@@ -400,12 +393,12 @@ async function fetchUpcomingNewsForAlerts(env) {
 
 
 /**
- * Checks for events that have just realized (Actual value is present).
+ * 🛠️ [MODIFIED] Actual Release Message Title වෙනස් කර ඇත.
  */
 async function fetchEconomicNews(env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
     try {
-        const events = await getCalendarEvents(); // Use the same scraper function
+        const events = await getCalendarEvents(); 
         
         if (events.length === 0) return;
 
@@ -434,8 +427,9 @@ async function fetchEconomicNews(env) {
             else if (event.impactClass === 'low') impactEmoji = "🟡";
 
             // --- Main Channel Message (Actual Release) ---
+            // 🛠️ Message Title වෙනස් කර ඇත
             const mainMessage =
-                `<b>🚨 Economic Calendar Release 🔔</b> ${impactEmoji}\n\n` +
+                `🟢 <b>ACTUAL NEWS RELEASED!</b> 🟢 ${impactEmoji}\n\n` +
                 `⏰ <b>Date & Time:</b> ${date_time}\n` +
                 `🕓 <b>Release Time:</b> ${event.eventTime ? event.eventTime.format('hh:mm A') : event.timeStr} (SL Time)\n\n` +
                 `🌍 <b>Currency:</b> ${event.currency}\n` +
@@ -478,7 +472,7 @@ async function fetchEconomicNews(env) {
 }
 
 
-// ... (TELEGRAM WEBHOOK HANDLER - UNCHANGED) ...
+// ... (The rest of the worker code: handleTelegramUpdate, handleCommands, handleScheduledTasks, export default - UNCHANGED)
 
 async function handleTelegramUpdate(update, env) {
     if (update.callback_query) {
@@ -569,8 +563,31 @@ async function handleCommands(update, env) {
     }
 }
 
+async function checkChannelMembership(userId, env) {
+    const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
+    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
+    const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 
-// ... (CLOUDFLARE WORKER HANDLERS - UNCHANGED) ...
+    if (!TELEGRAM_TOKEN || !CHAT_ID) return false;
+
+    const url = `${TELEGRAM_API_URL}/getChatMember?chat_id=${CHAT_ID}&user_id=${userId}`;
+
+    try {
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.ok && data.result) {
+            const status = data.result.status;
+            if (status === 'member' || status === 'administrator' || status === 'creator') {
+                return true;
+            }
+        }
+        return false;
+    } catch (error) {
+        console.error(`[Membership Check Error for user ${userId}]:`, error);
+        return false;
+    }
+}
 
 async function handleScheduledTasks(env) {
     // 1. Upcoming Pre-Alerts (News එන්න පැයකට කලින් Alert යැවීම - Actual අගය නොමැති නම් පමණයි)
