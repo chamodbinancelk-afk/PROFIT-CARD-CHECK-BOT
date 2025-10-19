@@ -2,6 +2,7 @@ import { load } from 'cheerio';
 import moment from 'moment-timezone';
 
 const HARDCODED_CONFIG = {
+    // ⚠️ ඔබේ Telegram Token සහ Chat ID නිවැරදිව ඇතුළත් කරන්න
     TELEGRAM_TOKEN: '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A',
     CHAT_ID: '-1003111341307',
 };
@@ -25,7 +26,7 @@ const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message';
 const LAST_PRE_ALERT_EVENT_ID_KEY = 'last_pre_alert_event_id';
 const PRE_ALERT_TTL_SECONDS = 259200; // 3 Days TTL for Pre-Alert
 
-// --- UTILITY FUNCTIONS ---
+// --- UTILITY FUNCTIONS (unchanged) ---
 
 async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarkup = null, replyToId = null, env) {
     const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
@@ -166,7 +167,7 @@ function analyzeComparison(actual, previous) {
 
 /**
  * 🛠️ Impact Parsing Logic එක ශක්තිමත් කර ඇත.
- * 🛠️ Date Filtering Logic එක දැඩි කර ඇත.
+ * 🛠️ Date Filtering Logic එක දැඩි කර ඇත (Today and Tomorrow පමණක් Fetch කරයි).
  */
 async function getCalendarEvents() {
     const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
@@ -180,7 +181,8 @@ async function getCalendarEvents() {
     // අපි Scrape කරන වෙලාවේදී අද දවස මොකක්ද කියලා moment වලින් ගන්නවා.
     const now = moment().tz(COLOMBO_TIMEZONE);
     const todayStart = now.clone().startOf('day');
-    const tomorrowStart = now.clone().add(1, 'days').startOf('day');
+    // Mon Oct 20th 00:00:00 (for an Oct 19th scrape)
+    const tomorrowStart = now.clone().add(1, 'days').startOf('day'); 
     
     // මෙය row එකෙන් කියවන date එක තබා ගැනීමට පමණයි.
     let currentDateStr = now.format('YYYYMMDD'); 
@@ -215,16 +217,14 @@ async function getCalendarEvents() {
         const previousStr = previous_td.text().trim() || "0";
         const forecastStr = forecast_td.text().trim() || "N/A";
 
-        // 2. 🛠️ IMPACT PARSING (MORE ROBUST LOGIC)
+        // 2. IMPACT PARSING
         let impactText = "Unknown Impact";
         let impactClass = "unknown";
         const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first();
         
         if (impactElement.length > 0) {
-            // Option A: Read the 'title' attribute (Most reliable)
             impactText = impactElement.attr('title') || "Unknown Impact";
             
-            // Option B: Read the class list for better classification
             const classList = impactElement.attr('class') || "";
             if (classList.includes('impact-icon--high')) {
                 impactText = "High Impact Expected";
@@ -239,7 +239,6 @@ async function getCalendarEvents() {
                 impactText = "Non-Economic/Holiday";
                 impactClass = "holiday";
             }
-            // Fallback check if title contains impact level text
             if (impactText.toLowerCase().includes('high')) impactClass = 'high';
             else if (impactText.toLowerCase().includes('medium')) impactClass = 'medium';
             else if (impactText.toLowerCase().includes('low')) impactClass = 'low';
@@ -264,8 +263,10 @@ async function getCalendarEvents() {
             }
         }
         
-        // 4. 🆕 STRICT DATE CHECK (To filter out old/irrelevant events)
+        // 4. 🆕 STRICT DATE CHECK (Fetch only Today and Tomorrow events)
         if (eventTime) {
+             // Event Time එක අද දවසට හෝ හෙට දවසට අයත් දැයි පරීක්ෂා කරයි. 
+             // Oct 21 events will fail this check and not be added to the list.
              isTodayOrTomorrow = eventTime.isSameOrAfter(todayStart, 'day') && eventTime.isBefore(tomorrowStart.clone().add(1, 'day'), 'day');
         }
 
@@ -285,13 +286,13 @@ async function getCalendarEvents() {
         }
     });
     
-    // We filter out only events for today and tomorrow that have a scheduled time.
     return events;
 }
 
 
 /**
- * 🛠️ [MODIFIED] Impact Filter එක ඉවත් කර ඇත. සියලුම News (High, Medium, Low, Unknown) alerts කරනු ලැබේ.
+ * 🛠️ Impact Filter ඉවත් කර ඇත (සියලුම news alerts කරයි).
+ * 🛠️ Critical 60-Minute Filter එක තහවුරු කර ඇත (දවස් ගණනකට පෙර alerts වීම නවත්වයි).
  */
 async function fetchUpcomingNewsForAlerts(env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
@@ -316,20 +317,20 @@ async function fetchUpcomingNewsForAlerts(env) {
             if (event.impactClass === 'holiday') {
                 continue; 
             }
-            // CRITICAL CHECK 3: සිදුවීම දැනටමත් සිදුවී ඇත්නම් (Event Time එක වර්තමාන වේලාවට වඩා අතීතයේ නම්) Alert අවශ්‍ය නැත.
+            // CRITICAL CHECK 3: සිදුවීම දැනටමත් සිදුවී ඇත්නම් Alert අවශ්‍ය නැත.
              if (event.eventTime.isSameOrBefore(now)) {
                  continue;
              }
             
-            // ❌ IMPACT FILTER REMOVED: සියලුම Impact Levels සඳහා Alert යවනු ලැබේ.
-            
-            // 🆕 CRITICAL CHECK: Alert එක යැවිය යුත්තේ සිදුවීමට පැයකට පෙර පමණයි!
+            // 🆕 CRITICAL CHECK 4: Alert එක යැවිය යුත්තේ සිදුවීමට පැයකට පෙර පමණයි!
             const timeDifferenceInMinutes = event.eventTime.diff(now, 'minutes');
+            
+            // **දැන් මේ පරීක්ෂාව ඔක්තෝබර් 21 සිදුවීමක් ඔක්තෝබර් 19 Alert වීම සම්පූර්ණයෙන්ම නවත්වනු ඇත.**
             if (timeDifferenceInMinutes > 60 || timeDifferenceInMinutes <= 0) {
-                 // Event එක පැයකට වඩා දුර නම් හෝ දැනටමත් සිදුවී ඇත්නම්, Alert යැවීම නවත්වන්න.
+                 // Event එක විනාඩි 60කට වඩා දුර නම් හෝ දැනටමත් සිදුවී ඇත්නම්, Alert යැවීම නවත්වන්න.
                  continue;
             }
-            // Event එක විනාඩි 60ක් හෝ ඊට අඩුවෙන් දුර නම්, මෙතැන් සිට Alert යැවීම සිදු කරයි.
+            // Alert එක යවනු ලබන්නේ Event එක විනාඩි 60ක් ඇතුළත සිදුවීමට නියමිත නම් පමණි.
             
             const preAlertKVKey = LAST_PRE_ALERT_EVENT_ID_KEY + "_" + event.id;
             const lastAlertId = await readKV(env, preAlertKVKey);
@@ -401,9 +402,7 @@ async function fetchEconomicNews(env) {
         let sentCount = 0;
         let lastSentMessage = "";
 
-        // Reverse the array to process older events first and ensure the latest is sent last
         for (const event of events.reverse()) {
-            // Only process if Actual value is present AND not a placeholder
             if (!event.actual || event.actual === "-") continue; 
 
             const eventKVKey = LAST_ECONOMIC_EVENT_ID_KEY + "_" + event.id;
@@ -416,13 +415,11 @@ async function fetchEconomicNews(env) {
             const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
             const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
             
-            // Impact එක සඳහා Emoji
             let impactEmoji = "💥";
             if (event.impactClass === 'high') impactEmoji = "🚨🚨🚨";
             else if (event.impactClass === 'medium') impactEmoji = "🟠🟠";
             else if (event.impactClass === 'low') impactEmoji = "🟡";
 
-            // --- Main Channel Message (Actual Release) ---
             const mainMessage =
                 `🟢 <b>ACTUAL NEWS RELEASED!</b> 🟢 ${impactEmoji}\n\n` +
                 `⏰ <b>Date & Time:</b> ${date_time}\n` +
@@ -436,7 +433,6 @@ async function fetchEconomicNews(env) {
                 `<b>📈 Market Reaction Forecast:</b> ${reaction}\n\n` +
                 `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
 
-            // --- Create Static Channel Link Inline Button ---
             const replyMarkup = {
                 inline_keyboard: [
                     [{ 
