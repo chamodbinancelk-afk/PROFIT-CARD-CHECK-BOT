@@ -1,4 +1,3 @@
-// ... (ES MODULE IMPORTS AND HARDCODED_CONFIG - UNCHANGED) ...
 import { load } from 'cheerio';
 import moment from 'moment-timezone';
 
@@ -26,10 +25,9 @@ const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message';
 const LAST_PRE_ALERT_EVENT_ID_KEY = 'last_pre_alert_event_id';
 const PRE_ALERT_TTL_SECONDS = 259200; // 3 Days TTL for Pre-Alert
 
-// --- UTILITY FUNCTIONS (UNCHANGED) ---
+// --- UTILITY FUNCTIONS ---
 
 async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarkup = null, replyToId = null, env) {
-    // ... (Original sendRawTelegramMessage function) ...
     const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
     
     if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN_HERE') {
@@ -100,7 +98,6 @@ async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarku
 }
 
 async function readKV(env, key) {
-    // ... (Original readKV function) ...
     try {
         if (!env.NEWS_STATE) {
             console.error("KV Binding 'NEWS_STATE' is missing in ENV.");
@@ -118,7 +115,6 @@ async function readKV(env, key) {
 }
 
 async function writeKV(env, key, value, expirationTtl) {
-    // ... (Original writeKV function) ...
     try {
         if (!env.NEWS_STATE) {
             console.error("KV Binding 'NEWS_STATE' is missing in ENV. Write failed.");
@@ -145,7 +141,6 @@ async function writeKV(env, key, value, expirationTtl) {
 }
 
 function analyzeComparison(actual, previous) {
-    // ... (Original analyzeComparison function - unchanged) ...
     try {
         const cleanAndParse = (value) => parseFloat(value.replace(/%|,|K|M|B/g, '').trim() || '0');
         const a = cleanAndParse(actual);
@@ -170,8 +165,8 @@ function analyzeComparison(actual, previous) {
 
 
 /**
- * 🛠️ [MODIFIED] Impact Parsing Logic එක ශක්තිමත් කර ඇත.
- * 🛠️ [MODIFIED] Date Filtering Logic එක දැඩි කර ඇත (Bot එක බොරු News Alert එවන්නේ නැති බවට සහතික කිරීම සඳහා).
+ * 🛠️ Impact Parsing Logic එක ශක්තිමත් කර ඇත.
+ * 🛠️ Date Filtering Logic එක දැඩි කර ඇත.
  */
 async function getCalendarEvents() {
     const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
@@ -291,13 +286,12 @@ async function getCalendarEvents() {
     });
     
     // We filter out only events for today and tomorrow that have a scheduled time.
-    // **The filtering is now done inside the loop using isTodayOrTomorrow for stricter control.**
     return events;
 }
 
 
 /**
- * 🛠️ [MODIFIED] දින දෙකකින් එන Alerts ලැබීම වැළැක්වීම සඳහා නව පරීක්ෂාවක් (timeDifferenceInMinutes > 60) එකතු කර ඇත.
+ * 🛠️ [MODIFIED] Impact Filter එක ඉවත් කර ඇත. සියලුම News (High, Medium, Low, Unknown) alerts කරනු ලැබේ.
  */
 async function fetchUpcomingNewsForAlerts(env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
@@ -327,10 +321,12 @@ async function fetchUpcomingNewsForAlerts(env) {
                  continue;
              }
             
-            // 🆕 CRITICAL CHECK 4: Alert එක යැවිය යුත්තේ සිදුවීමට පැයකට පෙර පමණයි!
+            // ❌ IMPACT FILTER REMOVED: සියලුම Impact Levels සඳහා Alert යවනු ලැබේ.
+            
+            // 🆕 CRITICAL CHECK: Alert එක යැවිය යුත්තේ සිදුවීමට පැයකට පෙර පමණයි!
             const timeDifferenceInMinutes = event.eventTime.diff(now, 'minutes');
-            if (timeDifferenceInMinutes > 60) {
-                 // Event එක පැයකට වඩා දුර නම්, Alert එක යැවීම නවත්වන්න.
+            if (timeDifferenceInMinutes > 60 || timeDifferenceInMinutes <= 0) {
+                 // Event එක පැයකට වඩා දුර නම් හෝ දැනටමත් සිදුවී ඇත්නම්, Alert යැවීම නවත්වන්න.
                  continue;
             }
             // Event එක විනාඩි 60ක් හෝ ඊට අඩුවෙන් දුර නම්, මෙතැන් සිට Alert යැවීම සිදු කරයි.
@@ -345,16 +341,15 @@ async function fetchUpcomingNewsForAlerts(env) {
             const eventDay = event.eventTime.format('YYYY-MM-DD');
             const releaseTime = event.eventTime.format('hh:mm A');
             
-            // Impact එක නෝට් කරන්න.
+            // Impact එක සඳහා Emoji
             let impactEmoji = "💥";
             if (event.impactClass === 'high') impactEmoji = "🚨🚨🚨";
             else if (event.impactClass === 'medium') impactEmoji = "🟠🟠";
             else if (event.impactClass === 'low') impactEmoji = "🟡";
 
-            // 🛠️ Message Title වෙනස් කර ඇත
             const alertMessage =
                 `⚠️ <b>PRE-ALERT: Upcoming Economic News!</b> ⚠️ ${impactEmoji}\n\n` +
-                `🚨 <b>Alert:</b> මෙම සිදුවීමට **විනාඩි ${timeDifferenceInMinutes}** ක කාලයක් ඉතිරිව ඇත!\n\n` + // Remaining time
+                `🚨 <b>Alert:</b> මෙම සිදුවීමට **විනාඩි ${timeDifferenceInMinutes}** ක කාලයක් ඉතිරිව ඇත!\n\n` + 
                 `📅 <b>Date:</b> ${eventDay} (SL Time)\n` +
                 `⏰ <b>Release Time:</b> ${releaseTime} (SL Time)\n\n` +
                 `🌍 <b>Currency:</b> ${event.currency}\n` +
@@ -394,7 +389,7 @@ async function fetchUpcomingNewsForAlerts(env) {
 
 
 /**
- * 🛠️ [MODIFIED] Actual Release Message Title වෙනස් කර ඇත.
+ * 🛠️ [UNCHANGED] Actual News Release (Actual අගය ආ පසු Alert යැවීම).
  */
 async function fetchEconomicNews(env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
@@ -428,7 +423,6 @@ async function fetchEconomicNews(env) {
             else if (event.impactClass === 'low') impactEmoji = "🟡";
 
             // --- Main Channel Message (Actual Release) ---
-            // 🛠️ Message Title වෙනස් කර ඇත
             const mainMessage =
                 `🟢 <b>ACTUAL NEWS RELEASED!</b> 🟢 ${impactEmoji}\n\n` +
                 `⏰ <b>Date & Time:</b> ${date_time}\n` +
@@ -473,7 +467,8 @@ async function fetchEconomicNews(env) {
 }
 
 
-// ... (The rest of the worker code: handleTelegramUpdate, handleCommands, handleScheduledTasks, export default - UNCHANGED)
+// --- WORKER HANDLERS (UNCHANGED) ---
+
 async function handleTelegramUpdate(update, env) {
     if (update.callback_query) {
         const callbackQueryId = update.callback_query.id;
