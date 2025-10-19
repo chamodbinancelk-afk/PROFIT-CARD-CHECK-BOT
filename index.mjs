@@ -1,8 +1,6 @@
 // required libraries
-const axios = require('axios');
-const cheerio = require('cheerio');
-const moment = require('moment-timezone');
-
+import { load } from 'cheerio';
+import moment from 'moment-timezone';
 // 🛑 CONSTANTS (ඔබේ ඉල්ලීම පරිදි Token සහ ID කෙලින්ම කේතයට ඇතුළත් කර ඇත)
 // ⚠️ මෙහි YOUR_BOT_TOKEN_HERE සහ YOUR_CHAT_ID_HERE වෙනුවට ඔබේ සත්‍ය අගයන් ඇතුළත් කරන්න.
 const BOT_TOKEN = "5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A"; 
