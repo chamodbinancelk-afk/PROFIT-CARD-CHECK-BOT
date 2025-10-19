@@ -297,7 +297,7 @@ async function getCalendarEvents() {
 
 
 /**
- * 🛠️ [MODIFIED] Pre-Alert Logic Message Title වෙනස් කර ඇත.
+ * 🛠️ [MODIFIED] දින දෙකකින් එන Alerts ලැබීම වැළැක්වීම සඳහා නව පරීක්ෂාවක් (timeDifferenceInMinutes > 60) එකතු කර ඇත.
  */
 async function fetchUpcomingNewsForAlerts(env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
@@ -327,63 +327,64 @@ async function fetchUpcomingNewsForAlerts(env) {
                  continue;
              }
             
+            // 🆕 CRITICAL CHECK 4: Alert එක යැවිය යුත්තේ සිදුවීමට පැයකට පෙර පමණයි!
+            const timeDifferenceInMinutes = event.eventTime.diff(now, 'minutes');
+            if (timeDifferenceInMinutes > 60) {
+                 // Event එක පැයකට වඩා දුර නම්, Alert එක යැවීම නවත්වන්න.
+                 continue;
+            }
+            // Event එක විනාඩි 60ක් හෝ ඊට අඩුවෙන් දුර නම්, මෙතැන් සිට Alert යැවීම සිදු කරයි.
+            
             const preAlertKVKey = LAST_PRE_ALERT_EVENT_ID_KEY + "_" + event.id;
             const lastAlertId = await readKV(env, preAlertKVKey);
             
+            // Alert එක කලින් යවා ඇත්නම්, නවත්වන්න.
             if (event.id === lastAlertId) continue;
             
-            // Calculate Pre-Alert Time (1 hour before the event)
-            const alertTime = event.eventTime.clone().subtract(1, 'hour');
+            // --- Pre-Alert Message ---
+            const eventDay = event.eventTime.format('YYYY-MM-DD');
+            const releaseTime = event.eventTime.format('hh:mm A');
             
-            // Check if the current time is after the Alert Time AND before the Event Time
-            const isAlertWindow = now.isAfter(alertTime) && now.isBefore(event.eventTime);
+            // Impact එක නෝට් කරන්න.
+            let impactEmoji = "💥";
+            if (event.impactClass === 'high') impactEmoji = "🚨🚨🚨";
+            else if (event.impactClass === 'medium') impactEmoji = "🟠🟠";
+            else if (event.impactClass === 'low') impactEmoji = "🟡";
 
-            if (isAlertWindow) {
-                // --- Pre-Alert Message ---
-                const eventDay = event.eventTime.format('YYYY-MM-DD');
-                const releaseTime = event.eventTime.format('hh:mm A');
+            // 🛠️ Message Title වෙනස් කර ඇත
+            const alertMessage =
+                `⚠️ <b>PRE-ALERT: Upcoming Economic News!</b> ⚠️ ${impactEmoji}\n\n` +
+                `🚨 <b>Alert:</b> මෙම සිදුවීමට **විනාඩි ${timeDifferenceInMinutes}** ක කාලයක් ඉතිරිව ඇත!\n\n` + // Remaining time
+                `📅 <b>Date:</b> ${eventDay} (SL Time)\n` +
+                `⏰ <b>Release Time:</b> ${releaseTime} (SL Time)\n\n` +
+                `🌍 <b>Currency:</b> ${event.currency}\n` +
+                `📌 <b>Headline:</b> ${event.title}\n` +
+                `💥 <b>Impact:</b> <b>${event.impact}</b>\n\n` +
+                `📉 <b>Forecast:</b> ${event.forecast}\n` +
+                `📉 <b>Previous:</b> ${event.previous}\n\n` +
+                `<i>වෙළඳපොළ Volatility සඳහා සූදානම් වන්න.</i>`;
                 
-                // Impact එක නෝට් කරන්න.
-                let impactEmoji = "💥";
-                if (event.impactClass === 'high') impactEmoji = "🚨🚨🚨";
-                else if (event.impactClass === 'medium') impactEmoji = "🟠🟠";
-                else if (event.impactClass === 'low') impactEmoji = "🟡";
+            const replyMarkup = {
+                inline_keyboard: [
+                    [{ 
+                        text: `🔥 ${CHANNEL_LINK_TEXT} < / >`, 
+                        url: CHANNEL_LINK_URL 
+                    }]
+                ]
+            };
 
-                // 🛠️ Message Title වෙනස් කර ඇත
-                const alertMessage =
-                    `⚠️ <b>PRE-ALERT: Upcoming Economic News!</b> ⚠️ ${impactEmoji}\n\n` +
-                    `🚨 <b>Alert:</b> මෙම සිදුවීමට **විනාඩි 60 ට වඩා අඩු** කාලයක් ඉතිරිව ඇත!\n\n` +
-                    `📅 <b>Date:</b> ${eventDay} (SL Time)\n` +
-                    `⏰ <b>Release Time:</b> ${releaseTime} (SL Time)\n\n` +
-                    `🌍 <b>Currency:</b> ${event.currency}\n` +
-                    `📌 <b>Headline:</b> ${event.title}\n` +
-                    `💥 <b>Impact:</b> <b>${event.impact}</b>\n\n` +
-                    `📉 <b>Forecast:</b> ${event.forecast}\n` +
-                    `📉 <b>Previous:</b> ${event.previous}\n\n` +
-                    `<i>වෙළඳපොළ Volatility සඳහා සූදානම් වන්න.</i>`;
-                    
-                const replyMarkup = {
-                    inline_keyboard: [
-                        [{ 
-                            text: `🔥 ${CHANNEL_LINK_TEXT} < / >`, 
-                            url: CHANNEL_LINK_URL 
-                        }]
-                    ]
-                };
+            const sendSuccess = await sendRawTelegramMessage(CHAT_ID, alertMessage, null, replyMarkup, null, env);
 
-                const sendSuccess = await sendRawTelegramMessage(CHAT_ID, alertMessage, null, replyMarkup, null, env);
-
-                if (sendSuccess) {
-                    await writeKV(env, preAlertKVKey, event.id, PRE_ALERT_TTL_SECONDS); 
-                    sentCount++;
-                }
+            if (sendSuccess) {
+                await writeKV(env, preAlertKVKey, event.id, PRE_ALERT_TTL_SECONDS); 
+                sentCount++;
             }
         }
         
         if (sentCount > 0) {
             console.log(`[Pre-Alert Success] Found and sent ${sentCount} new pre-alerts.`);
         } else {
-            console.log(`[Pre-Alert Success] No new alerts found in the 1-hour window or all had Actual values.`);
+            console.log(`[Pre-Alert Success] No new alerts found in the 60-minute window or all had Actual values.`);
         }
 
     } catch (error) {
@@ -473,7 +474,6 @@ async function fetchEconomicNews(env) {
 
 
 // ... (The rest of the worker code: handleTelegramUpdate, handleCommands, handleScheduledTasks, export default - UNCHANGED)
-
 async function handleTelegramUpdate(update, env) {
     if (update.callback_query) {
         const callbackQueryId = update.callback_query.id;
