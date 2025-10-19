@@ -1,16 +1,15 @@
-// required libraries: Cloudflare Workers මත ක්‍රියාත්මක වන පුස්තකාල පමණක් import කරන්න.
+// required libraries
 import { load } from 'cheerio';
 import moment from 'moment-timezone';
 
-// 🛑 CONSTANTS - ඔබේ Bot Token සහ Chat ID මෙහි ඇතුළත් කර ඇත
+// 🛑 CONSTANTS: Bot Token සහ Chat ID ඔබ ලබා දුන් අගයන්ට අනුව සකසා ඇත
 const BOT_TOKEN = "5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A";
 const CHAT_ID = "-1003111341307";
 const FOREX_URL = "https://www.forexfactory.com/calendar";
-// 💡 Telegram API URL එක සෘජුවම සකසා ඇත (node-telegram-bot-api අවශ්‍ය නොවේ)
 const TELEGRAM_API_URL = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`; 
 const TIMEZONE = 'Asia/Colombo';
 
-// Worker state (KV/Durable Objects නොමැතිව, මෙය Worker session එක තුළ පමණක් ක්‍රියා කරයි)
+// Worker state (KV නොමැතිව, මෙය Worker session එක තුළ පමණක් ක්‍රියා කරයි)
 const sentEventIds = new Set(); 
 
 /**
@@ -25,7 +24,6 @@ function analyzeComparison(actual, previous) {
             throw new Error("Invalid number format");
         }
         
-        // ... (Comparison logic is unchanged) ...
         if (a > p) {
             return {
                 comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`,
@@ -52,13 +50,13 @@ function analyzeComparison(actual, previous) {
 
 /**
  * Forex Factory වෙතින් නවතම සම්පූර්ණ කළ ආර්ථික සිදුවීම ලබා ගනී.
- * 💡 fetch API භාවිතයෙන් HTTP ඉල්ලීම සිදු කරයි (axios වෙනුවට).
  */
 async function getLatestEvent() {
     try {
         const response = await fetch(FOREX_URL, {
             headers: {
-                'User-Agent': 'Cloudflare Worker Scraper' // Cloudflare Workers සඳහා User-Agent
+                // Workers සඳහා User-Agent
+                'User-Agent': 'Cloudflare Worker Scraper' 
             }
         });
 
@@ -70,6 +68,7 @@ async function getLatestEvent() {
         const $ = load(html);
         const rows = $('.calendar__row');
 
+        // පිටුපසින් ඉදිරියට ගොස් නවතම සම්පූර්ණ කළ සිදුවීම සොයයි
         for (let i = rows.length - 1; i >= 0; i--) {
             const row = rows.eq(i);
             const eventId = row.attr('data-event-id');
@@ -106,7 +105,6 @@ async function getLatestEvent() {
 
 /**
  * Telegram හරහා සිදුවීම් විස්තර යවයි.
- * 💡 fetch API භාවිතයෙන් Telegram API වෙත Post request එක යවයි (node-telegram-bot-api වෙනුවට).
  */
 async function sendEvent(event) {
     const now = moment().tz(TIMEZONE).format('YYYY-MM-DD HH:mm:ss');
@@ -167,6 +165,7 @@ async function sendEvent(event) {
         console.log(`Sent event: ${event.id} - ${event.title}`);
         return true;
     } catch (error) {
+        // ඔබගේ Logs හිදී මෙම error එක දිස්විය යුතුය
         console.error("Error sending Telegram message:", error.message);
         return false;
     }
@@ -179,26 +178,31 @@ async function mainLogic() {
     try {
         const event = await getLatestEvent();
 
-        if (event && !sentEventIds.has(event.id)) {
+        // 🛑 තාවකාලික වෙනස: sentEventIds පරීක්ෂාව ඉවත් කර ඇත.
+        // මෙය පණිවිඩය යැවීම තහවුරු කිරීමට උපකාරී වේ.
+        if (event) {
+            console.log("Found event. Attempting to send to Telegram:", event.id);
             await sendEvent(event);
-            sentEventIds.add(event.id);
+            // sentEventIds.add(event.id); // KV නොමැතිව මෙය අර්ථ විරහිතයි
+        } else {
+            console.log("No new completed event (Actual value missing) in the current scan.");
         }
     } catch (e) {
         console.error("Main logic error:", e.message);
     }
 }
 
-// 🛑 EXPORT DEFAULT: Cloudflare Worker ES Module format එකට වෙනස් කිරීම
+// 🛑 CLOUDFLARE WORKER EXPORT (Manual Trigger සහ Cron Trigger සඳහා)
 export default {
-    // Cron Trigger එක ක්‍රියාත්මක වූ විට මෙය ධාවනය වේ
-    async scheduled(event, env, ctx) {
-        // ctx.waitUntil මගින් Worker එකේ ක්‍රියාකාරිත්වය අවසන් වන තෙක් බලා සිටී
-        ctx.waitUntil(mainLogic()); 
-    },
-
-    // Worker URL එකට HTTP Request එකක් එන විට මෙය ධාවනය වේ (පරීක්ෂා කිරීම සඳහා)
+    
+    // 1. 🌐 Manual Trigger (HTTP Request) - URL එකට පිවිසෙන විට ධාවනය වේ.
     async fetch(request, env, ctx) {
         ctx.waitUntil(mainLogic());
-        return new Response("Forex Scraper Logic initiated via HTTP request.", { status: 200 });
+        return new Response("Forex Scraper Logic initiated successfully via Manual HTTP Request.", { status: 200 });
+    },
+
+    // 2. ⏱️ Cron Trigger (Automatic Scheduled Run) - wrangler.toml අනුව ධාවනය වේ.
+    async scheduled(event, env, ctx) {
+        ctx.waitUntil(mainLogic()); 
     }
 };
