@@ -178,8 +178,10 @@ async function getCalendarEvents() {
     const rows = $('.calendar__row');
 
     const events = [];
+    // වර්තමාන වේලාව කොළඹ Timezone එකට අනුව
     const now = moment().tz(COLOMBO_TIMEZONE);
     const todayStart = now.clone().startOf('day');
+    // හෙට දවසේ ආරම්භය
     const tomorrowStart = now.clone().add(1, 'days').startOf('day'); 
     
     let currentDateStr = now.format('YYYYMMDD'); 
@@ -214,7 +216,7 @@ async function getCalendarEvents() {
         const previousStr = previous_td.text().trim() || "0";
         const forecastStr = forecast_td.text().trim() || "N/A";
 
-        // 2. 🛠️ IMPACT PARSING (පැරණි ගැටලුව නිවැරදි කිරීම)
+        // 2. 🛠️ IMPACT PARSING (Impact නිවැරදිව කියවීමට)
         let impactText = "Unknown Impact";
         let impactClass = "unknown";
         const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first();
@@ -262,9 +264,9 @@ async function getCalendarEvents() {
             }
         }
         
-        // 4. 🆕 STRICT DATE CHECK (Fetch only Today and Tomorrow events - ඔක්තෝබර් 21 සිදුවීමක් ඔක්තෝබර් 19 දින Fetch වීම නවත්වයි)
+        // 4. 🆕 STRICT DATE CHECK (Fetch only Today and Tomorrow events)
         if (eventTime) {
-             // Event Time එක අද දවසට හෝ හෙට දවසට අයත් දැයි පරීක්ෂා කරයි.
+             // Event Time එක අද දවසට හෝ හෙට දවසට (අද + 1) පමණක් අයත් දැයි පරීක්ෂා කරයි.
              isTodayOrTomorrow = eventTime.isSameOrAfter(todayStart, 'day') && eventTime.isBefore(tomorrowStart.clone().add(1, 'day'), 'day');
         }
 
@@ -289,7 +291,7 @@ async function getCalendarEvents() {
 
 
 /**
- * 🛠️ [MODIFIED] Critical 60-Minute Filter එක තහවුරු කර ඇත (දවස් ගණනකට පෙර alerts වීම නවත්වයි).
+ * 🛠️ [MODIFIED] Critical 60-Minute Filter එක තහවුරු කර ඇත (Milli-seconds ගණනය කිරීම හරහා දින ගණනකට පෙර alerts වීම නවත්වයි).
  */
 async function fetchUpcomingNewsForAlerts(env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
@@ -319,12 +321,13 @@ async function fetchUpcomingNewsForAlerts(env) {
                  continue;
              }
             
-            // 🆕 CRITICAL CHECK 4: Alert එක යැවිය යුත්තේ සිදුවීමට පැයකට පෙර පමණයි!
-            // .diff(now, 'minutes') මඟින් eventTime සහ වර්තමාන වේලාව අතර වෙනස (මිනිට්ටු වලින්) ගණනය කරයි.
-            const timeDifferenceInMinutes = event.eventTime.diff(now, 'minutes');
+            // 🆕 CRITICAL CHECK 4: Alert එක යැවිය යුත්තේ සිදුවීමට පැයකට පෙර පමණයි! (NEW FIX)
+            // eventTime සහ now අතර වෙනස මිලිසෙකන්ඩ්ස් වලින් ගෙන මිනිත්තු වලට හරවයි.
+            const timeDifferenceInMs = event.eventTime.valueOf() - now.valueOf();
+            const timeDifferenceInMinutes = Math.floor(timeDifferenceInMs / (1000 * 60)); // නිවැරදිව මිනිත්තු වලට හරවයි.
             
             if (timeDifferenceInMinutes > 60 || timeDifferenceInMinutes <= 0) {
-                 // Event එක විනාඩි 60කට වඩා දුර නම් හෝ දැනටමත් සිදුවී ඇත්නම්, Alert යැවීම නවත්වන්න.
+                 // Event එක විනාඩි 60කට වඩා දුර නම් (දින ගණනකට පෙර) හෝ දැනටමත් සිදුවී ඇත්නම්, Alert යැවීම නවත්වන්න.
                  continue;
             }
             // Alert එක යවනු ලබන්නේ Event එක විනාඩි 60ක් ඇතුළත සිදුවීමට නියමිත නම් පමණි.
