@@ -178,10 +178,8 @@ async function getCalendarEvents() {
     const rows = $('.calendar__row');
 
     const events = [];
-    // වර්තමාන වේලාව කොළඹ Timezone එකට අනුව
     const now = moment().tz(COLOMBO_TIMEZONE);
     const todayStart = now.clone().startOf('day');
-    // හෙට දවසේ ආරම්භය
     const tomorrowStart = now.clone().add(1, 'days').startOf('day'); 
     
     let currentDateStr = now.format('YYYYMMDD'); 
@@ -195,7 +193,6 @@ async function getCalendarEvents() {
         // 1. Date (If it's a new day row)
         const dateElement = row.find('td.calendar__day span.date');
         if (dateElement.length > 0) {
-            // FF date format: "Mon Oct 13"
             const ffDateStr = dateElement.text().trim() + ' ' + now.year();
             const parsedDate = moment.tz(ffDateStr, 'ddd MMM D YYYY', COLOMBO_TIMEZONE);
             if (parsedDate.isValid()) {
@@ -228,22 +225,19 @@ async function getCalendarEvents() {
             // Option B: Read the class list for classification (This fixes the 'Unknown Impact' bug for High/Medium)
             const classList = impactElement.attr('class') || "";
             if (classList.includes('impact-icon--high')) {
-                impactText = "High Impact Expected";
                 impactClass = "high";
             } else if (classList.includes('impact-icon--medium')) {
-                impactText = "Medium Impact Expected";
                 impactClass = "medium";
             } else if (classList.includes('impact-icon--low')) {
-                impactText = "Low Impact Expected";
                 impactClass = "low";
             } else if (classList.includes('impact-icon--holiday')) {
-                impactText = "Non-Economic/Holiday";
                 impactClass = "holiday";
             }
-            // Fallback check
-            if (impactText.toLowerCase().includes('high')) impactClass = 'high';
-            else if (impactText.toLowerCase().includes('medium')) impactClass = 'medium';
-            else if (impactText.toLowerCase().includes('low')) impactClass = 'low';
+            // Fallback check: If the title was generic, use class list to set the final text
+             if (impactClass === 'high') impactText = 'High Impact Expected';
+             else if (impactClass === 'medium') impactText = 'Medium Impact Expected';
+             else if (impactClass === 'low') impactText = 'Low Impact Expected';
+             else if (impactClass === 'holiday') impactText = 'Non-Economic/Holiday';
         }
         
         // 3. Calculating the Event Time in Colombo Timezone
@@ -291,7 +285,8 @@ async function getCalendarEvents() {
 
 
 /**
- * 🛠️ [MODIFIED] Critical 60-Minute Filter එක තහවුරු කර ඇත (Milli-seconds ගණනය කිරීම හරහා දින ගණනකට පෙර alerts වීම නවත්වයි).
+ * 🛠️ [MODIFIED] Critical 60-Minute Filter එක තහවුරු කර ඇත.
+ * 🛠️ [MODIFIED] Time Format එක HH:mm ලෙස සකසා ඇත.
  */
 async function fetchUpcomingNewsForAlerts(env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
@@ -321,16 +316,15 @@ async function fetchUpcomingNewsForAlerts(env) {
                  continue;
              }
             
-            // 🆕 CRITICAL CHECK 4: Alert එක යැවිය යුත්තේ සිදුවීමට පැයකට පෙර පමණයි! (NEW FIX)
-            // eventTime සහ now අතර වෙනස මිලිසෙකන්ඩ්ස් වලින් ගෙන මිනිත්තු වලට හරවයි.
+            // 🆕 CRITICAL CHECK 4: Alert එක යැවිය යුත්තේ සිදුවීමට පැයකට පෙර පමණයි!
             const timeDifferenceInMs = event.eventTime.valueOf() - now.valueOf();
-            const timeDifferenceInMinutes = Math.floor(timeDifferenceInMs / (1000 * 60)); // නිවැරදිව මිනිත්තු වලට හරවයි.
+            // අපි විනාඩි ගණන ගණනය කරන්නේ 59.999... වුවත් 59 ලෙස පෙන්වීමට Math.ceil() භාවිතා කරමු.
+            const timeDifferenceInMinutes = Math.ceil(timeDifferenceInMs / (1000 * 60)); 
             
-            if (timeDifferenceInMinutes > 60 || timeDifferenceInMinutes <= 0) {
-                 // Event එක විනාඩි 60කට වඩා දුර නම් (දින ගණනකට පෙර) හෝ දැනටමත් සිදුවී ඇත්නම්, Alert යැවීම නවත්වන්න.
+            // අපි විනාඩි 60 ට වඩා වැඩි නම් හෝ 1ට වඩා අඩු නම් (සිදුවී ඇත්නම්), skip කරන්න.
+            if (timeDifferenceInMinutes > 60 || timeDifferenceInMinutes < 1) {
                  continue;
             }
-            // Alert එක යවනු ලබන්නේ Event එක විනාඩි 60ක් ඇතුළත සිදුවීමට නියමිත නම් පමණි.
             
             const preAlertKVKey = LAST_PRE_ALERT_EVENT_ID_KEY + "_" + event.id;
             const lastAlertId = await readKV(env, preAlertKVKey);
@@ -340,7 +334,9 @@ async function fetchUpcomingNewsForAlerts(env) {
             
             // --- Pre-Alert Message ---
             const eventDay = event.eventTime.format('YYYY-MM-DD');
-            const releaseTime = event.eventTime.format('hh:mm A');
+            
+            // 🛠️ [AM/PM FIX] 24-පැය ආකෘතිය (HH:mm) භාවිතා කරයි.
+            const releaseTime = event.eventTime.format('HH:mm'); 
             
             // Impact එක සඳහා Emoji
             let impactEmoji = "💥";
@@ -390,7 +386,7 @@ async function fetchUpcomingNewsForAlerts(env) {
 
 
 /**
- * 🛠️ [UNCHANGED] Actual News Release (Actual අගය ආ පසු Alert යැවීම).
+ * 🛠️ [MODIFIED] Actual News Release එකේ වේලා ආකෘතිය HH:mm ලෙස සකසා ඇත.
  */
 async function fetchEconomicNews(env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
@@ -413,7 +409,8 @@ async function fetchEconomicNews(env) {
             await writeKV(env, eventKVKey, event.id);
 
             const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
-            const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD hh:mm A');
+            // 🛠️ [AM/PM FIX] 24-පැය ආකෘතිය (HH:mm) භාවිතා කරයි.
+            const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD HH:mm'); 
             
             let impactEmoji = "💥";
             if (event.impactClass === 'high') impactEmoji = "🚨🚨🚨";
@@ -423,7 +420,8 @@ async function fetchEconomicNews(env) {
             const mainMessage =
                 `🟢 <b>ACTUAL NEWS RELEASED!</b> 🟢 ${impactEmoji}\n\n` +
                 `⏰ <b>Date & Time:</b> ${date_time}\n` +
-                `🕓 <b>Release Time:</b> ${event.eventTime ? event.eventTime.format('hh:mm A') : event.timeStr} (SL Time)\n\n` +
+                // 🛠️ [AM/PM FIX] 24-පැය ආකෘතිය (HH:mm) භාවිතා කරයි.
+                `🕓 <b>Release Time:</b> ${event.eventTime ? event.eventTime.format('HH:mm') : event.timeStr} (SL Time)\n\n` +
                 `🌍 <b>Currency:</b> ${event.currency}\n` +
                 `📌 <b>Headline:</b> ${event.title}\n` +
                 `💥 <b>Impact:</b> <b>${event.impact}</b>\n\n` +
