@@ -1,7 +1,6 @@
 // required libraries
 const axios = require('axios');
 const cheerio = require('cheerio');
-const TelegramBot = require('node-telegram-bot-api');
 const moment = require('moment-timezone');
 
 // 🛑 CONSTANTS (ඔබේ ඉල්ලීම පරිදි Token සහ ID කෙලින්ම කේතයට ඇතුළත් කර ඇත)
