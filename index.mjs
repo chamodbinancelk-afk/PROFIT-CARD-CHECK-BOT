@@ -166,8 +166,7 @@ function analyzeComparison(actual, previous) {
 
 
 /**
- * 🛠️ [MODIFIED] Impact Parsing Logic එක ශක්තිමත් කර ඇත.
- * 🛠️ Date Filtering Logic එක දැඩි කර ඇත (Today and Tomorrow පමණක් Fetch කරයි).
+ * 🛠️ [MODIFIED] TimeStr = Tentative/All Day නම්, Event එක Skip කරයි.
  */
 async function getCalendarEvents() {
     const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
@@ -213,16 +212,20 @@ async function getCalendarEvents() {
         const previousStr = previous_td.text().trim() || "0";
         const forecastStr = forecast_td.text().trim() || "N/A";
 
-        // 2. 🛠️ IMPACT PARSING (Impact නිවැරදිව කියවීමට)
+        // 🛠️ NEW CRITICAL FIX: Skip events without a clear time
+        if (timeStr === "All Day" || timeStr === "Tentative") {
+             // මෙම සිදුවීම් සඳහා 60-minute filter එක යෙදිය නොහැකි නිසා skip කරයි.
+             return;
+        }
+
+        // 2. 🛠️ IMPACT PARSING 
         let impactText = "Unknown Impact";
         let impactClass = "unknown";
         const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first();
         
         if (impactElement.length > 0) {
-            // Option A: Read the 'title' attribute (Most reliable)
             impactText = impactElement.attr('title') || "Unknown Impact";
             
-            // Option B: Read the class list for classification (This fixes the 'Unknown Impact' bug for High/Medium)
             const classList = impactElement.attr('class') || "";
             if (classList.includes('impact-icon--high')) {
                 impactClass = "high";
@@ -233,7 +236,6 @@ async function getCalendarEvents() {
             } else if (classList.includes('impact-icon--holiday')) {
                 impactClass = "holiday";
             }
-            // Fallback check: If the title was generic, use class list to set the final text
              if (impactClass === 'high') impactText = 'High Impact Expected';
              else if (impactClass === 'medium') impactText = 'Medium Impact Expected';
              else if (impactClass === 'low') impactText = 'Low Impact Expected';
@@ -252,15 +254,15 @@ async function getCalendarEvents() {
             // Fallback (Less Reliable)
             try {
                  const dateTimeStr = currentDateStr + ' ' + timeStr;
+                 // Note: If the timeStr is a static value like "3:15am", we use 'h:mma'
                  eventTime = moment.tz(dateTimeStr, 'YYYYMMDD h:mma', COLOMBO_TIMEZONE);
             } catch(e) {
                 console.error("Time parsing fallback failed:", e);
             }
         }
         
-        // 4. 🆕 STRICT DATE CHECK (Fetch only Today and Tomorrow events)
+        // 4. STRICT DATE CHECK (Fetch only Today and Tomorrow events)
         if (eventTime) {
-             // Event Time එක අද දවසට හෝ හෙට දවසට (අද + 1) පමණක් අයත් දැයි පරීක්ෂා කරයි.
              isTodayOrTomorrow = eventTime.isSameOrAfter(todayStart, 'day') && eventTime.isBefore(tomorrowStart.clone().add(1, 'day'), 'day');
         }
 
@@ -285,8 +287,8 @@ async function getCalendarEvents() {
 
 
 /**
- * 🛠️ [MODIFIED] Critical 60-Minute Filter එක තහවුරු කර ඇත.
- * 🛠️ [MODIFIED] Time Format එක HH:mm ලෙස සකසා ඇත.
+ * 🛠️ Critical 60-Minute Filter එක තහවුරු කර ඇත.
+ * 🛠️ Time Format එක HH:mm ලෙස සකසා ඇත.
  */
 async function fetchUpcomingNewsForAlerts(env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
@@ -318,7 +320,6 @@ async function fetchUpcomingNewsForAlerts(env) {
             
             // 🆕 CRITICAL CHECK 4: Alert එක යැවිය යුත්තේ සිදුවීමට පැයකට පෙර පමණයි!
             const timeDifferenceInMs = event.eventTime.valueOf() - now.valueOf();
-            // අපි විනාඩි ගණන ගණනය කරන්නේ 59.999... වුවත් 59 ලෙස පෙන්වීමට Math.ceil() භාවිතා කරමු.
             const timeDifferenceInMinutes = Math.ceil(timeDifferenceInMs / (1000 * 60)); 
             
             // අපි විනාඩි 60 ට වඩා වැඩි නම් හෝ 1ට වඩා අඩු නම් (සිදුවී ඇත්නම්), skip කරන්න.
@@ -335,7 +336,7 @@ async function fetchUpcomingNewsForAlerts(env) {
             // --- Pre-Alert Message ---
             const eventDay = event.eventTime.format('YYYY-MM-DD');
             
-            // 🛠️ [AM/PM FIX] 24-පැය ආකෘතිය (HH:mm) භාවිතා කරයි.
+            // 🛠️ [TIME FORMAT FIX] 24-පැය ආකෘතිය (HH:mm) භාවිතා කරයි.
             const releaseTime = event.eventTime.format('HH:mm'); 
             
             // Impact එක සඳහා Emoji
@@ -368,6 +369,7 @@ async function fetchUpcomingNewsForAlerts(env) {
             const sendSuccess = await sendRawTelegramMessage(CHAT_ID, alertMessage, null, replyMarkup, null, env);
 
             if (sendSuccess) {
+                // Alert එක යැවූ පසු KV එකට ලියන්න.
                 await writeKV(env, preAlertKVKey, event.id, PRE_ALERT_TTL_SECONDS); 
                 sentCount++;
             }
@@ -386,7 +388,7 @@ async function fetchUpcomingNewsForAlerts(env) {
 
 
 /**
- * 🛠️ [MODIFIED] Actual News Release එකේ වේලා ආකෘතිය HH:mm ලෙස සකසා ඇත.
+ * 🛠️ Actual News Release එකේ වේලා ආකෘතිය HH:mm ලෙස සකසා ඇත.
  */
 async function fetchEconomicNews(env) {
     const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
@@ -409,7 +411,6 @@ async function fetchEconomicNews(env) {
             await writeKV(env, eventKVKey, event.id);
 
             const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
-            // 🛠️ [AM/PM FIX] 24-පැය ආකෘතිය (HH:mm) භාවිතා කරයි.
             const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD HH:mm'); 
             
             let impactEmoji = "💥";
@@ -420,7 +421,6 @@ async function fetchEconomicNews(env) {
             const mainMessage =
                 `🟢 <b>ACTUAL NEWS RELEASED!</b> 🟢 ${impactEmoji}\n\n` +
                 `⏰ <b>Date & Time:</b> ${date_time}\n` +
-                // 🛠️ [AM/PM FIX] 24-පැය ආකෘතිය (HH:mm) භාවිතා කරයි.
                 `🕓 <b>Release Time:</b> ${event.eventTime ? event.eventTime.format('HH:mm') : event.timeStr} (SL Time)\n\n` +
                 `🌍 <b>Currency:</b> ${event.currency}\n` +
                 `📌 <b>Headline:</b> ${event.title}\n` +
@@ -461,7 +461,7 @@ async function fetchEconomicNews(env) {
 }
 
 
-// --- WORKER HANDLERS (UNCHANGED) ---
+// --- WORKER HANDLERS (unchanged) ---
 
 async function handleTelegramUpdate(update, env) {
     if (update.callback_query) {
