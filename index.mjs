@@ -1,638 +1,181 @@
-import { load } from 'cheerio';
-import moment from 'moment-timezone';
+// required libraries
+const axios = require('axios');
+const cheerio = require('cheerio');
+const TelegramBot = require('node-telegram-bot-api');
+const moment = require('moment-timezone');
 
-const HARDCODED_CONFIG = {
-    // ⚠️ ඔබේ Telegram Token සහ Chat ID නිවැරදිව ඇතුළත් කරන්න
-    TELEGRAM_TOKEN: '5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A',
-    CHAT_ID: '-1003111341307',
-};
+// 🛑 CONSTANTS (ඔබේ ඉල්ලීම පරිදි Token සහ ID කෙලින්ම කේතයට ඇතුළත් කර ඇත)
+// ⚠️ මෙහි YOUR_BOT_TOKEN_HERE සහ YOUR_CHAT_ID_HERE වෙනුවට ඔබේ සත්‍ය අගයන් ඇතුළත් කරන්න.
+const BOT_TOKEN = "5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A"; 
+const CHAT_ID = "-1003111341307"; 
+const URL = "https://www.forexfactory.com/calendar";
+const TIMEZONE = 'Asia/Colombo';
 
-const CHANNEL_USERNAME = 'C_F_News';
-const CHANNEL_LINK_TEXT = 'C F NEWS ₿';
-const CHANNEL_LINK_URL = `https://t.me/${CHANNEL_USERNAME}`;
+// Initialize the Telegram bot
+if (BOT_TOKEN === "YOUR_BOT_TOKEN_HERE" || CHAT_ID === "YOUR_CHAT_ID_HERE") {
+    console.error("ERROR: Please replace 'YOUR_BOT_TOKEN_HERE' and 'YOUR_CHAT_ID_HERE' with your actual values.");
+    process.exit(1);
+}
+const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
-const COLOMBO_TIMEZONE = 'Asia/Colombo';
-const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Referer': 'https://www.forexfactory.com/',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-};
+const sentEventIds = new Set();
 
-const FF_CALENDAR_URL = "https://www.forexfactory.com/calendar";
+/**
+ * Actual අගය Previous අගය සමග සංසන්දනය කර වෙළඳපොළ පුරෝකථනය ලබා දෙයි (සිංහලෙන්).
+ */
+function analyzeComparison(actual, previous) {
+    try {
+        const a = parseFloat(actual.replace('%', '').trim());
+        const p = parseFloat(previous.replace('%', '').trim());
 
-const LAST_ECONOMIC_EVENT_ID_KEY = 'last_economic_event_id';
-const LAST_ECONOMIC_MESSAGE_KEY = 'last_economic_message';
-const LAST_PRE_ALERT_EVENT_ID_KEY = 'last_pre_alert_event_id';
-const PRE_ALERT_TTL_SECONDS = 259200; // 3 Days TTL for Pre-Alert
+        if (isNaN(a) || isNaN(p)) {
+            throw new Error("Invalid number format");
+        }
 
-// --- UTILITY FUNCTIONS (unchanged) ---
-
-async function sendRawTelegramMessage(chatId, message, imgUrl = null, replyMarkup = null, replyToId = null, env) {
-    const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
-    
-    if (!TELEGRAM_TOKEN || TELEGRAM_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN_HERE') {
-        console.error("TELEGRAM_TOKEN is missing or placeholder.");
-        return false;
-    }
-    const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
-    
-    let currentImgUrl = imgUrl;
-    let apiMethod = currentImgUrl ? 'sendPhoto' : 'sendMessage';
-    let maxAttempts = 3;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        let payload = { chat_id: chatId, parse_mode: 'HTML' }; 
-
-        if (apiMethod === 'sendPhoto' && currentImgUrl) {
-            payload.photo = currentImgUrl;
-            payload.caption = message;
+        if (a > p) {
+            return {
+                comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`,
+                reaction: "📉 Forex සහ Crypto වෙළඳපොළ පහළට යා හැකියි"
+            };
+        } else if (a < p) {
+            return {
+                comparison: `පෙර දත්තවලට වඩා පහළයි (${actual})`,
+                reaction: "📈 Forex සහ Crypto වෙළඳපොළ ඉහළට යා හැකියි"
+            };
         } else {
-            payload.text = message;
-            apiMethod = 'sendMessage';
+            return {
+                comparison: `පෙර දත්තවලට සමානයි (${actual})`,
+                reaction: "⚖ Forex සහ Crypto වෙළඳපොළ ස්ථාවරයෙහි පවතී"
+            };
         }
-        
-        if (replyMarkup && apiMethod === 'sendMessage') {
-            payload.reply_markup = replyMarkup;
-        }
-
-        if (replyToId) {
-            payload.reply_to_message_id = replyToId;
-            payload.allow_sending_without_reply = true;
-        }
-
-        const apiURL = `${TELEGRAM_API_URL}/${apiMethod}`;
-        
-        try {
-            const response = await fetch(apiURL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (response.status === 429) {
-                const delay = Math.pow(2, attempt) * 1000;
-                await new Promise(resolve => setTimeout(resolve, delay));
-                continue;
-            }
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                if (apiMethod === 'sendPhoto') {
-                    currentImgUrl = null;
-                    apiMethod = 'sendMessage';
-                    attempt = -1;
-                    console.error(`SendPhoto failed, retrying as sendMessage: ${errorText}`);
-                    continue;
-                }
-                console.error(`Telegram API Error (${apiMethod}): ${response.status} - ${errorText}`);
-                break;
-            }
-            return true; // Success
-        } catch (error) {
-            console.error("Error sending message to Telegram:", error);
-            const delay = Math.pow(2, attempt) * 1000;
-            await new Promise(resolve => setTimeout(resolve, delay));
-        }
+    } catch (error) {
+        return {
+            comparison: `Actual: ${actual}`,
+            reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක"
+        };
     }
-    return false;
 }
 
-async function readKV(env, key) {
+/**
+ * Forex Factory වෙතින් නවතම සම්පූර්ණ කළ ආර්ථික සිදුවීම ලබා ගනී.
+ */
+async function getLatestEvent() {
     try {
-        if (!env.NEWS_STATE) {
-            console.error("KV Binding 'NEWS_STATE' is missing in ENV.");
-            return null;
+        const response = await axios.get(URL, {
+            headers: {
+                // User-Agent එකක් තිබීම scraping වලදී වැදගත්
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        });
+
+        const $ = cheerio.load(response.data);
+        const rows = $('.calendar__row');
+
+        // නවතම සිදුවීම් පරීක්ෂා කිරීම සඳහා පිටුපසින් ඉදිරියට (reverse) යන්න
+        for (let i = rows.length - 1; i >= 0; i--) {
+            const row = rows.eq(i);
+            const eventId = row.attr('data-event-id');
+
+            const currency = row.find('.calendar__currency').text().trim();
+            const title = row.find('.calendar__event').text().trim();
+            const actual = row.find('.calendar__actual').text().trim();
+            const previous = row.find('.calendar__previous').text().trim() || "0";
+            const time = row.find('.calendar__time').text().trim();
+            
+            // ✅ IMPACT FIX: title ගුණාංගය ඇති span එක සොයා ගැනීම
+            const impactSpan = row.find('.calendar__impact').find('span[title]');
+            
+            const impact = impactSpan.attr('title') || "Unknown";
+            
+            // 'Actual' අගය හිස් නොවන හෝ '-' නොවන සිදුවීම් පමණක් තෝරා ගනී
+            if (eventId && currency && title && actual && actual !== "-") {
+                return {
+                    id: eventId,
+                    currency: currency,
+                    title: title,
+                    time: time,
+                    actual: actual,
+                    previous: previous,
+                    impact: impact 
+                };
+            }
         }
-        const value = await env.NEWS_STATE.get(key);
-        if (value === null || value === undefined) {
-            return null;
-        }
-        return value;
-    } catch (e) {
-        console.error(`KV Read Error (${key}):`, e);
+        return null;
+    } catch (error) {
+        console.error("Error fetching or parsing data:", error.message);
         return null;
     }
 }
 
-async function writeKV(env, key, value, expirationTtl) {
-    try {
-        if (!env.NEWS_STATE) {
-            console.error("KV Binding 'NEWS_STATE' is missing in ENV. Write failed.");
-            return;
-        }
-        
-        let options = {};
-        
-        if (key.startsWith(LAST_ECONOMIC_EVENT_ID_KEY)) {
-            options.expirationTtl = 2592000;
-        } 
-        else if (key.startsWith(LAST_PRE_ALERT_EVENT_ID_KEY)) { 
-             options.expirationTtl = PRE_ALERT_TTL_SECONDS; 
-        }
-        
-        if (expirationTtl !== undefined) {
-            options.expirationTtl = expirationTtl;
-        }
-
-        await env.NEWS_STATE.put(key, String(value), options);
-    } catch (e) {
-        console.error(`KV Write Error (${key}):`, e);
-    }
-}
-
-function analyzeComparison(actual, previous) {
-    try {
-        const cleanAndParse = (value) => parseFloat(value.replace(/%|,|K|M|B/g, '').trim() || '0');
-        const a = cleanAndParse(actual);
-        const p = cleanAndParse(previous);
-
-        if (isNaN(a) || isNaN(p) || actual.trim() === '-' || actual.trim() === '' || actual.toLowerCase().includes('holiday')) {
-            return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
-        }
-
-        if (a > p) {
-            return { comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`, reaction: "📈 Forex සහ Crypto වෙළඳපොළ ඉහළට යා හැකියි (ධනාත්මක බලපෑම්)" };
-        } else if (a < p) {
-            return { comparison: `පෙර දත්තවලට වඩා පහළයි (${actual})`, reaction: "📉 Forex සහ Crypto වෙළඳපොළ පහළට යා හැකියි (ඍණාත්මක බලපෑම්)" };
-        } else {
-            return { comparison: `පෙර දත්තවලට සමානයි (${actual})`, reaction: "⚖ Forex සහ Crypto වෙළඳපොළ ස්ථාවරයෙහි පවතී" };
-        }
-    } catch (error) {
-        console.error("Error analyzing economic comparison:", error);
-        return { comparison: `Actual: ${actual}`, reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක" };
-    }
-}
-
-
 /**
- * 🛠️ [MODIFIED] TimeStr = Tentative/All Day නම්, Event එක Skip කරයි.
+ * Telegram හරහා සිදුවීම් විස්තර යවයි.
  */
-async function getCalendarEvents() {
-    const resp = await fetch(FF_CALENDAR_URL, { headers: HEADERS });
-    if (!resp.ok) throw new Error(`[SCRAPING ERROR] HTTP error! status: ${resp.status} on calendar page.`);
+function sendEvent(event) {
+    // ශ්‍රී ලංකාවේ වේලාවට අනුව වත්මන් වේලාව
+    const now = moment().tz(TIMEZONE).format('YYYY-MM-DD HH:mm:ss');
 
-    const html = await resp.text();
-    const $ = load(html);
-    const rows = $('.calendar__row');
-
-    const events = [];
-    const now = moment().tz(COLOMBO_TIMEZONE);
-    const todayStart = now.clone().startOf('day');
-    const tomorrowStart = now.clone().add(1, 'days').startOf('day'); 
-    
-    let currentDateStr = now.format('YYYYMMDD'); 
-    
-    rows.each((i, el) => {
-        const row = $(el);
-        const eventId = row.attr("data-event-id");
-        
-        if (!eventId) return;
-
-        // 1. Date (If it's a new day row)
-        const dateElement = row.find('td.calendar__day span.date');
-        if (dateElement.length > 0) {
-            const ffDateStr = dateElement.text().trim() + ' ' + now.year();
-            const parsedDate = moment.tz(ffDateStr, 'ddd MMM D YYYY', COLOMBO_TIMEZONE);
-            if (parsedDate.isValid()) {
-                 currentDateStr = parsedDate.format('YYYYMMDD');
-            }
-        }
-        
-        const currency_td = row.find(".calendar__currency");
-        const title_td = row.find(".calendar__event");
-        const time_td = row.find('.calendar__time');
-        const actual_td = row.find(".calendar__actual");
-        const previous_td = row.find(".calendar__previous");
-        const forecast_td = row.find(".calendar__forecast");
-        const impact_td = row.find('.calendar__impact');
-        
-        const timeStr = time_td.text().trim();
-        const actualStr = actual_td.text().trim();
-        const previousStr = previous_td.text().trim() || "0";
-        const forecastStr = forecast_td.text().trim() || "N/A";
-
-        // 🛠️ NEW CRITICAL FIX: Skip events without a clear time
-        if (timeStr === "All Day" || timeStr === "Tentative") {
-             // මෙම සිදුවීම් සඳහා 60-minute filter එක යෙදිය නොහැකි නිසා skip කරයි.
-             return;
-        }
-
-        // 2. 🛠️ IMPACT PARSING 
-        let impactText = "Unknown Impact";
-        let impactClass = "unknown";
-        const impactElement = impact_td.find('span.impact-icon, div.impact-icon').first();
-        
-        if (impactElement.length > 0) {
-            impactText = impactElement.attr('title') || "Unknown Impact";
-            
-            const classList = impactElement.attr('class') || "";
-            if (classList.includes('impact-icon--high')) {
-                impactClass = "high";
-            } else if (classList.includes('impact-icon--medium')) {
-                impactClass = "medium";
-            } else if (classList.includes('impact-icon--low')) {
-                impactClass = "low";
-            } else if (classList.includes('impact-icon--holiday')) {
-                impactClass = "holiday";
-            }
-             if (impactClass === 'high') impactText = 'High Impact Expected';
-             else if (impactClass === 'medium') impactText = 'Medium Impact Expected';
-             else if (impactClass === 'low') impactText = 'Low Impact Expected';
-             else if (impactClass === 'holiday') impactText = 'Non-Economic/Holiday';
-        }
-        
-        // 3. Calculating the Event Time in Colombo Timezone
-        let eventTime = null;
-        let isTodayOrTomorrow = false;
-        
-        const timestampMs = row.attr('data-timestamp');
-        if (timestampMs) {
-            // MOST RELIABLE: Use FF's provided timestamp (UNIX ms)
-            eventTime = moment.unix(timestampMs / 1000).tz(COLOMBO_TIMEZONE);
-        } else if (timeStr && timeStr !== "All Day" && timeStr !== "Tentative") {
-            // Fallback (Less Reliable)
-            try {
-                 const dateTimeStr = currentDateStr + ' ' + timeStr;
-                 // Note: If the timeStr is a static value like "3:15am", we use 'h:mma'
-                 eventTime = moment.tz(dateTimeStr, 'YYYYMMDD h:mma', COLOMBO_TIMEZONE);
-            } catch(e) {
-                console.error("Time parsing fallback failed:", e);
-            }
-        }
-        
-        // 4. STRICT DATE CHECK (Fetch only Today and Tomorrow events)
-        if (eventTime) {
-             isTodayOrTomorrow = eventTime.isSameOrAfter(todayStart, 'day') && eventTime.isBefore(tomorrowStart.clone().add(1, 'day'), 'day');
-        }
-
-        if (eventTime && isTodayOrTomorrow) {
-            events.push({
-                id: eventId,
-                currency: currency_td.text().trim(),
-                title: title_td.text().trim(),
-                actual: actualStr,
-                previous: previousStr,
-                forecast: forecastStr,
-                impact: impactText,
-                impactClass: impactClass, 
-                timeStr: timeStr, 
-                eventTime: eventTime 
-            });
-        }
-    });
-    
-    return events;
-}
-
-
-/**
- * 🛠️ Critical 60-Minute Filter එක තහවුරු කර ඇත.
- * 🛠️ Time Format එක HH:mm ලෙස සකසා ඇත.
- */
-async function fetchUpcomingNewsForAlerts(env) {
-    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
-    
-    try {
-        const events = await getCalendarEvents();
-        
-        if (events.length === 0) {
-            console.info("[Pre-Alert Check] No upcoming events found for today/tomorrow.");
-            return;
-        }
-        
-        const now = moment().tz(COLOMBO_TIMEZONE);
-        let sentCount = 0;
-
-        for (const event of events) {
-            // CRITICAL CHECK 1: Actual අගය තිබේ නම්, එය "Upcoming" සිදුවීමක් නොවේ.
-            if (event.actual && event.actual.trim() !== '-' && event.actual.trim() !== '') {
-                continue; 
-            }
-            // CRITICAL CHECK 2: "Holiday" සිදුවීම් සඳහා Alert අවශ්‍ය නැත.
-            if (event.impactClass === 'holiday') {
-                continue; 
-            }
-            // CRITICAL CHECK 3: සිදුවීම දැනටමත් සිදුවී ඇත්නම් Alert අවශ්‍ය නැත.
-             if (event.eventTime.isSameOrBefore(now)) {
-                 continue;
-             }
-            
-            // 🆕 CRITICAL CHECK 4: Alert එක යැවිය යුත්තේ සිදුවීමට පැයකට පෙර පමණයි!
-            const timeDifferenceInMs = event.eventTime.valueOf() - now.valueOf();
-            const timeDifferenceInMinutes = Math.ceil(timeDifferenceInMs / (1000 * 60)); 
-            
-            // අපි විනාඩි 60 ට වඩා වැඩි නම් හෝ 1ට වඩා අඩු නම් (සිදුවී ඇත්නම්), skip කරන්න.
-            if (timeDifferenceInMinutes > 60 || timeDifferenceInMinutes < 1) {
-                 continue;
-            }
-            
-            const preAlertKVKey = LAST_PRE_ALERT_EVENT_ID_KEY + "_" + event.id;
-            const lastAlertId = await readKV(env, preAlertKVKey);
-            
-            // Alert එක කලින් යවා ඇත්නම්, නවත්වන්න.
-            if (event.id === lastAlertId) continue;
-            
-            // --- Pre-Alert Message ---
-            const eventDay = event.eventTime.format('YYYY-MM-DD');
-            
-            // 🛠️ [TIME FORMAT FIX] 24-පැය ආකෘතිය (HH:mm) භාවිතා කරයි.
-            const releaseTime = event.eventTime.format('HH:mm'); 
-            
-            // Impact එක සඳහා Emoji
-            let impactEmoji = "💥";
-            if (event.impactClass === 'high') impactEmoji = "🚨🚨🚨";
-            else if (event.impactClass === 'medium') impactEmoji = "🟠🟠";
-            else if (event.impactClass === 'low') impactEmoji = "🟡";
-
-            const alertMessage =
-                `⚠️ <b>PRE-ALERT: Upcoming Economic News!</b> ⚠️ ${impactEmoji}\n\n` +
-                `🚨 <b>Alert:</b> මෙම සිදුවීමට **විනාඩි ${timeDifferenceInMinutes}** ක කාලයක් ඉතිරිව ඇත!\n\n` + 
-                `📅 <b>Date:</b> ${eventDay} (SL Time)\n` +
-                `⏰ <b>Release Time:</b> ${releaseTime} (SL Time)\n\n` +
-                `🌍 <b>Currency:</b> ${event.currency}\n` +
-                `📌 <b>Headline:</b> ${event.title}\n` +
-                `💥 <b>Impact:</b> <b>${event.impact}</b>\n\n` +
-                `📉 <b>Forecast:</b> ${event.forecast}\n` +
-                `📉 <b>Previous:</b> ${event.previous}\n\n` +
-                `<i>වෙළඳපොළ Volatility සඳහා සූදානම් වන්න.</i>`;
-                
-            const replyMarkup = {
-                inline_keyboard: [
-                    [{ 
-                        text: `🔥 ${CHANNEL_LINK_TEXT} < / >`, 
-                        url: CHANNEL_LINK_URL 
-                    }]
-                ]
-            };
-
-            const sendSuccess = await sendRawTelegramMessage(CHAT_ID, alertMessage, null, replyMarkup, null, env);
-
-            if (sendSuccess) {
-                // Alert එක යැවූ පසු KV එකට ලියන්න.
-                await writeKV(env, preAlertKVKey, event.id, PRE_ALERT_TTL_SECONDS); 
-                sentCount++;
-            }
-        }
-        
-        if (sentCount > 0) {
-            console.log(`[Pre-Alert Success] Found and sent ${sentCount} new pre-alerts.`);
-        } else {
-            console.log(`[Pre-Alert Success] No new alerts found in the 60-minute window or all had Actual values.`);
-        }
-
-    } catch (error) {
-        console.error("[PRE-ALERT ERROR] A CRITICAL error occurred during PRE-ALERT task:", error.stack);
-    }
-}
-
-
-/**
- * 🛠️ Actual News Release එකේ වේලා ආකෘතිය HH:mm ලෙස සකසා ඇත.
- */
-async function fetchEconomicNews(env) {
-    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
-    try {
-        const events = await getCalendarEvents(); 
-        
-        if (events.length === 0) return;
-
-        let sentCount = 0;
-        let lastSentMessage = "";
-
-        for (const event of events.reverse()) {
-            if (!event.actual || event.actual === "-") continue; 
-
-            const eventKVKey = LAST_ECONOMIC_EVENT_ID_KEY + "_" + event.id;
-            const lastEventId = await readKV(env, eventKVKey);
-            
-            if (event.id === lastEventId) continue;
-            
-            await writeKV(env, eventKVKey, event.id);
-
-            const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
-            const date_time = moment().tz(COLOMBO_TIMEZONE).format('YYYY-MM-DD HH:mm'); 
-            
-            let impactEmoji = "💥";
-            if (event.impactClass === 'high') impactEmoji = "🚨🚨🚨";
-            else if (event.impactClass === 'medium') impactEmoji = "🟠🟠";
-            else if (event.impactClass === 'low') impactEmoji = "🟡";
-
-            const mainMessage =
-                `🟢 <b>ACTUAL NEWS RELEASED!</b> 🟢 ${impactEmoji}\n\n` +
-                `⏰ <b>Date & Time:</b> ${date_time}\n` +
-                `🕓 <b>Release Time:</b> ${event.eventTime ? event.eventTime.format('HH:mm') : event.timeStr} (SL Time)\n\n` +
-                `🌍 <b>Currency:</b> ${event.currency}\n` +
-                `📌 <b>Headline:</b> ${event.title}\n` +
-                `💥 <b>Impact:</b> <b>${event.impact}</b>\n\n` +
-                `📈 <b>Actual:</b> ${event.actual}\n` +
-                `📉 <b>Previous:</b> ${event.previous}\n\n` +
-                `🔍 <b>Details:</b> ${comparison}\n\n` +
-                `<b>📈 Market Reaction Forecast:</b> ${reaction}\n\n` +
-                `🚀 <b>Dev: Mr Chamo 🇱🇰</b>`;
-
-            const replyMarkup = {
-                inline_keyboard: [
-                    [{ 
-                        text: `🔥 ${CHANNEL_LINK_TEXT} < / >`, 
-                        url: CHANNEL_LINK_URL 
-                    }]
-                ]
-            };
-            
-            const sendSuccess = await sendRawTelegramMessage(CHAT_ID, mainMessage, null, replyMarkup, null, env);
-
-            if (sendSuccess) {
-                lastSentMessage = mainMessage;
-                sentCount++;
-            }
-        }
-        
-        if (sentCount > 0) {
-            await writeKV(env, LAST_ECONOMIC_MESSAGE_KEY, lastSentMessage);
-            console.log(`[Actual Release Success] Found and sent ${sentCount} new events. Saved latest to KV.`);
-        } else {
-            console.log(`[Actual Release Success] No new events found to send.`);
-        }
-
-    } catch (error) {
-        console.error("[ACTUAL RELEASE ERROR] A CRITICAL error occurred during ACTUAL RELEASE task:", error.stack);
-    }
-}
-
-
-// --- WORKER HANDLERS (unchanged) ---
-
-async function handleTelegramUpdate(update, env) {
-    if (update.callback_query) {
-        const callbackQueryId = update.callback_query.id;
-        const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
-        const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
-        
-        await fetch(`${TELEGRAM_API_URL}/answerCallbackQuery`, {
-             method: 'POST',
-             headers: { 'Content-Type': 'application/json' },
-             body: JSON.stringify({ callback_query_id: callbackQueryId, text: 'මෙම බොත්තම යාවත්කාලීන කර ඇත.', show_alert: false })
-        });
-        return;
-    }
-
-    if (!update.message || !update.message.text) {
-        return;
-    }
-    
-    await handleCommands(update, env);
-}
-
-async function handleCommands(update, env) {
-    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
-
-    const text = update.message.text.trim();
-    const command = text.split(' ')[0].toLowerCase();
-    const userId = update.message.from.id;
-    const chatId = update.message.chat.id;
-    const messageId = update.message.message_id;
-    const username = update.message.from.username || update.message.from.first_name;
-
-    if (command === '/economic') {
-        const isMember = await checkChannelMembership(userId, env);
-
-        if (!isMember) {
-            const denialMessage =
-                `⛔ <b>Access Denied</b> ⛔\n\n` +
-                `Hey There <a href="tg://user?id=${userId}">${username}</a>,\n` +
-                `You Must Join <b>${CHANNEL_LINK_TEXT}</b> Channel To Use This BOT.\n` +
-                `So, Please Join it & Try Again.👀 Thank You ✍️`;
-
-            const replyMarkup = {
-                inline_keyboard: [
-                    [{
-                        text: `🔥 ${CHANNEL_LINK_TEXT} < / >`,
-                        url: CHANNEL_LINK_URL
-                    }]
-                ]
-            };
-
-            await sendRawTelegramMessage(chatId, denialMessage, null, replyMarkup, messageId, env);
-            return;
-        }
-    }
-
-    switch (command) {
-        case '/start':
-            const replyText =
-                `<b>👋 Hello There !</b>\n\n` +
-                `💁‍♂️ මේ BOT ගෙන් පුළුවන් ඔයාට <b>Economic News</b> සිංහලෙන් දැන ගන්න. News Update වෙද්දීම <b>C F NEWS MAIN CHANNEL</b> එකට යවනවා.\n\n` +
-                `🙋‍♂️ Commands වල Usage එක මෙහෙමයි👇\n\n` +
-                `◇ <code>/economic</code> :- 📁 Last Economic News (Economic Calendar Event)\n\n` +
-                `🎯 මේ BOT පැය 24ම Active එකේ තියෙනවා.🔔.. ✍️\n\n` +
-                `◇───────────────◇\n\n` +
-                `🚀 <b>Developer :</b> @chamoddeshan\n` +
-                `🔥 <b>Mr Chamo Corporation ©</b>\n\n` +
-                `◇───────────────◇`;
-            await sendRawTelegramMessage(chatId, replyText, null, null, messageId, env);
+    let impactLevel;
+    switch (event.impact) {
+        case "High Impact Expected":
+            impactLevel = "🔴 High";
             break;
-
-        case '/economic':
-            const messageKey = LAST_ECONOMIC_MESSAGE_KEY;
-            const lastFullMessage = await readKV(env, messageKey);
-            
-            if (lastFullMessage) {
-                await sendRawTelegramMessage(chatId, lastFullMessage, null, null, messageId, env);
-            } else {
-                const fallbackText = "Sorry, no recent economic event has been processed yet. Please wait for the next update.";
-                await sendRawTelegramMessage(chatId, fallbackText, null, null, messageId, env);
-            }
+        case "Medium Impact Expected":
+            impactLevel = "🟠 Medium";
             break;
-
+        case "Low Impact Expected":
+            impactLevel = "🟢 Low";
+            break;
         default:
-            const defaultReplyText = `ඔබට ස්වයංක්‍රීයව පුවත් ලැබෙනු ඇත. වැඩි විස්තර සහ Commands සඳහා <b>/start</b> යොදන්න.`;
-            await sendRawTelegramMessage(chatId, defaultReplyText, null, null, messageId, env);
-            break;
+            impactLevel = "⚪ Unknown";
     }
+
+    const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
+
+    const msg = `🛑 *Breaking News* 📰
+
+⏰ *Date & Time:* ${now}
+
+🌍 *Currency:* ${event.currency}
+
+📌 *Headline:* ${event.title}
+
+🔥 *Impact:* ${impactLevel}
+
+📈 *Actual:* ${event.actual}
+📉 *Previous:* ${event.previous}
+
+🔍 *Details:* ${comparison}
+
+📈 *Market Reaction Forecast:* ${reaction}
+
+🚀 *Dev : Mr Chamo 🇱🇰*`;
+
+    // Markdown format එකෙන් පණිවිඩය යවන්න
+    bot.sendMessage(CHAT_ID, msg, { parse_mode: "Markdown" })
+        .then(() => {
+            console.log(`Sent event: ${event.id} - ${event.title}`);
+        })
+        .catch(error => {
+            console.error("Error sending Telegram message:", error.message);
+        });
 }
 
-async function checkChannelMembership(userId, env) {
-    const TELEGRAM_TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
-    const CHAT_ID = HARDCODED_CONFIG.CHAT_ID;
-    const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
-
-    if (!TELEGRAM_TOKEN || !CHAT_ID) return false;
-
-    const url = `${TELEGRAM_API_URL}/getChatMember?chat_id=${CHAT_ID}&user_id=${userId}`;
-
+/**
+ * ප්‍රධාන කේතයේ ක්‍රියාත්මක වන ලූපය.
+ */
+async function mainLoop() {
     try {
-        const response = await fetch(url);
-        const data = await response.json();
+        const event = await getLatestEvent();
 
-        if (data.ok && data.result) {
-            const status = data.result.status;
-            if (status === 'member' || status === 'administrator' || status === 'creator') {
-                return true;
-            }
+        if (event && !sentEventIds.has(event.id)) {
+            sendEvent(event);
+            sentEventIds.add(event.id);
         }
-        return false;
-    } catch (error) {
-        console.error(`[Membership Check Error for user ${userId}]:`, error);
-        return false;
+    } catch (e) {
+        console.error("Main loop error:", e.message);
     }
 }
 
-async function handleScheduledTasks(env) {
-    // 1. Upcoming Pre-Alerts (News එන්න පැයකට කලින් Alert යැවීම - Actual අගය නොමැති නම් පමණයි)
-    await fetchUpcomingNewsForAlerts(env);
-    
-    // 2. Actual News Release (Actual අගය ආ පසු Alert යැවීම - Actual අගය තිබේ නම් පමණයි)
-    await fetchEconomicNews(env);
-}
-
-export default {
-    async scheduled(event, env, ctx) {
-        ctx.waitUntil(
-            (async () => {
-                try {
-                    await handleScheduledTasks(env);
-                } catch (error) {
-                    console.error("[CRITICAL CRON FAILURE]: ", error.stack);
-                }
-            })()
-        );
-    },
-
-    async fetch(request, env, ctx) {
-        try {
-            const url = new URL(request.url);
-
-            if (url.pathname === '/trigger') {
-                await handleScheduledTasks(env);
-                return new Response("Scheduled task (Pre-Alerts & Actual Release) manually triggered. Check your Telegram channel and Worker Logs.", { status: 200 });
-            }
-            
-            if (url.pathname === '/status') {
-                const lastEconomicPreview = await readKV(env, LAST_ECONOMIC_MESSAGE_KEY);
-                
-                const statusMessage =
-                    `Economic Bot Worker is active.\n` +
-                    `KV Binding Check: ${env.NEWS_STATE ? 'OK (Bound)' : 'FAIL (Missing Binding)'}\n` +
-                    `Last Economic Message (Preview): ${lastEconomicPreview ? lastEconomicPreview.substring(0, 100).replace(/(\r\n|\n|\r)/gm, " ") + '...' : 'N/A'}`;
-                
-                return new Response(statusMessage, { status: 200 });
-            }
-
-            if (request.method === 'POST') {
-                console.log("--- WEBHOOK REQUEST RECEIVED (POST) ---");
-                const update = await request.json();
-                
-                ctx.waitUntil(handleTelegramUpdate(update, env)); 
-                
-                return new Response('OK', { status: 200 });
-            }
-
-            return new Response('Economic News Bot is ready. Use /trigger to test manually.', { status: 200 });
-            
-        } catch (e) {
-            console.error('[CRITICAL FETCH FAILURE - 1101 ERROR CAUGHT]:', e.stack);
-            return new Response(`Worker threw an unhandled exception: ${e.message}. Check Cloudflare Worker Logs for Stack Trace.`, { status: 500 });
-        }
-    }
-};
+// Start the bot and the polling interval (තත්පර 1ක් පාසා පරීක්ෂා කරයි)
+console.log("Bot started...");
+setInterval(mainLoop, 1000);
