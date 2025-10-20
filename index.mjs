@@ -2,15 +2,13 @@
 import { load } from 'cheerio';
 import moment from 'moment-timezone';
 
-// 🛑 CONSTANTS: Bot Token සහ Chat ID ඔබ ලබා දුන් අගයන්ට අනුව සකසා ඇත
+// 🛑 CONSTANTS
 const BOT_TOKEN = "5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A";
 const CHAT_ID = "-1003111341307";
 const FOREX_URL = "https://www.forexfactory.com/calendar";
 const TELEGRAM_API_URL = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`; 
 const TIMEZONE = 'Asia/Colombo';
 
-// Worker state (KV නොමැතිව, මෙය Worker session එක තුළ පමණක් ක්‍රියා කරයි)
-const sentEventIds = new Set(); 
 
 /**
  * Actual අගය Previous අගය සමග සංසන්දනය කර වෙළඳපොළ පුරෝකථනය ලබා දෙයි (සිංහලෙන්).
@@ -55,7 +53,6 @@ async function getLatestEvent() {
     try {
         const response = await fetch(FOREX_URL, {
             headers: {
-                // Workers සඳහා User-Agent
                 'User-Agent': 'Cloudflare Worker Scraper' 
             }
         });
@@ -68,7 +65,6 @@ async function getLatestEvent() {
         const $ = load(html);
         const rows = $('.calendar__row');
 
-        // පිටුපසින් ඉදිරියට ගොස් නවතම සම්පූර්ණ කළ සිදුවීම සොයයි
         for (let i = rows.length - 1; i >= 0; i--) {
             const row = rows.eq(i);
             const eventId = row.attr('data-event-id');
@@ -79,7 +75,7 @@ async function getLatestEvent() {
             const previous = row.find('.calendar__previous').text().trim() || "0";
             const time = row.find('.calendar__time').text().trim();
             
-            // ✅ IMPACT FIX: title ගුණාංගය ඇති span එක සොයා ගැනීම
+            // ✅ Impact Extraction Logic
             const impactSpan = row.find('.calendar__impact').find('span[title]');
             
             const impact = impactSpan.attr('title') || "Unknown";
@@ -165,25 +161,47 @@ async function sendEvent(event) {
         console.log(`Sent event: ${event.id} - ${event.title}`);
         return true;
     } catch (error) {
-        // ඔබගේ Logs හිදී මෙම error එක දිස්විය යුතුය
         console.error("Error sending Telegram message:", error.message);
         return false;
     }
 }
 
 /**
- * ප්‍රධාන කාර්යය ඉටු කරන Logic කොටස.
+ * ප්‍රධාන කාර්යය ඉටු කරන Logic කොටස (KV Storage භාවිතයෙන්).
+ * 💡 env object එකේ KV binding එක Cloudflare මගින් සපයනු ලබයි.
  */
-async function mainLogic() {
+async function mainLogic(env) {
+    // KV තුළ අවසාන ID එක ගබඩා කිරීමට භාවිතා කරන Key එක
+    const HISTORY_KEY = 'LAST_SENT_EVENT_ID';
+    
+    // 🛑 FOREX_HISTORY KV binding එක Cloudflare මගින් සපයන බැවින්,
+    // එය env.FOREX_HISTORY ලෙස සෘජුවම ප්‍රවේශ වේ.
+    const kvStore = env.FOREX_HISTORY;
+
     try {
         const event = await getLatestEvent();
 
-        // 🛑 තාවකාලික වෙනස: sentEventIds පරීක්ෂාව ඉවත් කර ඇත.
-        // මෙය පණිවිඩය යැවීම තහවුරු කිරීමට උපකාරී වේ.
         if (event) {
-            console.log("Found event. Attempting to send to Telegram:", event.id);
-            await sendEvent(event);
-            // sentEventIds.add(event.id); // KV නොමැතිව මෙය අර්ථ විරහිතයි
+            // 1. KV එකෙන් අවසන් වරට යැවූ ID එක කියවීම
+            const lastSentId = await kvStore.get(HISTORY_KEY);
+            
+            if (lastSentId === event.id) {
+                // 🛑 පුනරාවර්තනය නවත්වයි
+                console.log(`Event ${event.id} already sent. Skipping.`);
+                return;
+            }
+
+            console.log("Found NEW event. Attempting to send to Telegram:", event.id);
+            
+            // 2. පණිවිඩය යැවීම
+            const success = await sendEvent(event);
+
+            // 3. සාර්ථක නම්, නව ID එක KV එකට ලිවීම
+            if (success) {
+                await kvStore.put(HISTORY_KEY, event.id);
+                console.log(`Successfully saved NEW event ID ${event.id} to KV.`);
+            }
+
         } else {
             console.log("No new completed event (Actual value missing) in the current scan.");
         }
@@ -192,17 +210,16 @@ async function mainLogic() {
     }
 }
 
-// 🛑 CLOUDFLARE WORKER EXPORT (Manual Trigger සහ Cron Trigger සඳහා)
+// 🛑 CLOUDFLARE WORKER EXPORT (KV වෙත env object එක යැවීම)
 export default {
     
-    // 1. 🌐 Manual Trigger (HTTP Request) - URL එකට පිවිසෙන විට ධාවනය වේ.
+    // fetch සහ scheduled යන දෙකෙහිම env object එක mainLogic වෙත යැවිය යුතුය.
     async fetch(request, env, ctx) {
-        ctx.waitUntil(mainLogic());
+        ctx.waitUntil(mainLogic(env));
         return new Response("Forex Scraper Logic initiated successfully via Manual HTTP Request.", { status: 200 });
     },
 
-    // 2. ⏱️ Cron Trigger (Automatic Scheduled Run) - wrangler.toml අනුව ධාවනය වේ.
     async scheduled(event, env, ctx) {
-        ctx.waitUntil(mainLogic()); 
+        ctx.waitUntil(mainLogic(env)); 
     }
 };
