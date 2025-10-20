@@ -110,7 +110,7 @@ function extractEventDetails(row) {
 // --- Upcoming Events Logic ---
 
 /**
- * ඊළඟ මිනිත්තු 65 තුළ ඇති සිදුවීම් සොයා ගනී. (FIXED TIME LOGIC)
+ * ඊළඟ මිනිත්තු 365 (පැය 6 යි විනාඩි 5) තුළ ඇති සිදුවීම් සොයා ගනී.
  */
 async function getUpcomingEvents() {
     try {
@@ -123,8 +123,8 @@ async function getUpcomingEvents() {
         const upcomingEvents = [];
         
         const currentTime = moment().tz(TIMEZONE);
-        // ඊළඟ මිනිත්තු 65 කවුළුව (මායිම් වේලාවන් නිවැරදිව හසු කර ගැනීමට)
-        const timeWindowEnd = currentTime.clone().add(65, 'minutes'); 
+        // 🛑 මෙහිදී Time Window එක පැය 6 යි විනාඩි 5 (මිනිත්තු 365) ලෙස සකස් කර ඇත.
+        const timeWindowEnd = currentTime.clone().add(365, 'minutes'); 
         let eventDate = currentTime.clone().startOf('day'); 
 
         rows.each((i, el) => {
@@ -135,7 +135,6 @@ async function getUpcomingEvents() {
             if (rowClass.includes('calendar__row--date')) {
                  const dateText = row.find('.calendar__cell').text().trim();
                  if (!dateText.includes("Today")) { 
-                     // උදා: Mon, Oct 20 වැනි format එක පාර්ස් කරයි.
                      const parsedDate = moment.tz(dateText, "ddd, MMM DD", TIMEZONE);
                      if (parsedDate.isValid()) {
                          eventDate = parsedDate.startOf('day');
@@ -146,22 +145,24 @@ async function getUpcomingEvents() {
 
             const details = extractEventDetails(row);
             
-            // Time එකක් නොමැති නම් හෝ 'All Day' නම් මග හරින්න
-            if (!details || !details.timeStr || details.timeStr === 'All Day') return;
+            // 1. Details නැත්නම්, මග හරින්න
+            if (!details) return;
 
-            // Actual අගය තිබේ නම් (එනම් Completed නම්) Upcoming ලෙස නොසලකයි
-            // Note: Actual හිස් නම් (Upcoming) ලෙස සලකයි.
+            // 2. Actual අගය තිබේ නම් (එනම් Completed නම්) Upcoming ලෙස නොසලකයි
             if (details.actual && details.actual !== '-') return;
+            
+            // 3. Time String එකක් නොමැති නම්, මග හරින්න
+            if (!details.timeStr || details.timeStr === 'All Day') return;
             
             let scheduledTime;
             try {
                 // වේලාව පාර්ස් කිරීම
                 scheduledTime = moment.tz(eventDate.format('YYYY-MM-DD') + ' ' + details.timeStr, 'YYYY-MM-DD h:mma', TIMEZONE);
 
-                // වේලාව අතීතයට අයත් නම් මග හරින්න
+                // 🛑 ආරක්ෂාව: වේලාව අතීතයට අයත් නම් මග හරින්න
                 if (scheduledTime.isBefore(currentTime.clone().subtract(2, 'minutes'))) return; 
 
-                // 🛑 ඊළඟ මිනිත්තු 65 තුළ තිබේ නම් තෝරන්න
+                // 🛑 ඊළඟ මිනිත්තු 365 තුළ තිබේ නම් තෝරන්න
                 if (scheduledTime.isSameOrAfter(currentTime) && scheduledTime.isBefore(timeWindowEnd)) {
                     upcomingEvents.push({
                         ...details,
@@ -169,7 +170,8 @@ async function getUpcomingEvents() {
                     });
                 }
             } catch (e) {
-                // Time parsing errors ignored
+                console.error(`Time parsing error for ${details.title} (${details.timeStr}):`, e.message);
+                // Time parsing අසාර්ථක වුවහොත්, එම සිදුවීම මග හරියි.
             }
         });
         
