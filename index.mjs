@@ -9,6 +9,9 @@ const FOREX_URL = "https://www.forexfactory.com/calendar";
 const TELEGRAM_API_URL = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`; 
 const TIMEZONE = 'Asia/Colombo'; // ශ්‍රී ලංකා වේලා කලාපය
 
+const UPCOMING_KEY = 'SENT_UPCOMING_IDS'; 
+const COMPLETED_KEY = 'LAST_COMPLETED_ID';
+
 // --- Shared Helper Functions ---
 
 /**
@@ -76,7 +79,7 @@ function extractEventDetails(row) {
     const previous = row.find('.calendar__previous').text().trim() || "0";
     const timeStr = row.find('.calendar__time').text().trim();
 
-    // Impact Extraction (Impact fix logic)
+    // Impact Extraction
     const impactSpan = row.find('.calendar__impact').find('span');
     let impact = impactSpan.attr('title');
 
@@ -108,7 +111,7 @@ function extractEventDetails(row) {
     };
 }
 
-// --- Upcoming Events Logic (Final & Most Robust Time/Date Fix) ---
+// --- Upcoming Events Logic (Robust and Final) ---
 
 /**
  * ඊළඟ මිනිත්තු 365 (පැය 6 යි විනාඩි 5) තුළ ඇති සිදුවීම් සොයා ගනී.
@@ -127,7 +130,7 @@ async function getUpcomingEvents() {
         // Alert Window: 6 hours and 5 minutes (365 minutes)
         const timeWindowEnd = currentTime.clone().add(365, 'minutes'); 
         
-        // 🛑 නව Date Context විචල්‍යය: අද දින ලෙස ආරම්භ කරයි
+        // Date Context: අද දින ලෙස ආරම්භ කරයි
         let currentDateContext = currentTime.clone().startOf('day'); 
 
         rows.each((i, el) => {
@@ -153,7 +156,7 @@ async function getUpcomingEvents() {
             if (!details) return;
             // Completed නම් මග හැරීම
             if (details.actual && details.actual !== "-") return; 
-            // Time නැතිනම් මග හැරීම (උදා: All Day හෝ Tentative)
+            // Time නැතිනම් මග හැරීම
             if (!details.timeStr || details.timeStr === 'All Day') return; 
 
             let scheduledTime;
@@ -170,18 +173,22 @@ async function getUpcomingEvents() {
                     return; 
                 }
                 
-                // 4. Time Validation and Filtering (Strict)
+                // 4. Time Validation and Filtering
                 
-                // Cron run ප්‍රමාදයන් සඳහා විනාඩි 5ක ආන්තිකය (margin) ලබා දීම
-                const pastMargin = currentTime.clone().subtract(5, 'minutes');
+                // Past Margin එක පැය 2ක් අතීතයට ගැනීම (අතීත සිදුවීම් filter කිරීමට)
+                const pastMargin = currentTime.clone().subtract(120, 'minutes'); 
                 
-                // සිදුවීම [Past Margin, Time Window End] අතර තිබිය යුතුය
+                // [DEBUG] Log
+                console.log(`[DEBUG] Checking event: ${details.title}. Scheduled: ${scheduledTime.format('YYYY-MM-DD HH:mm:ss')}, Current: ${currentTime.format('YYYY-MM-DD HH:mm:ss')}.`);
+
+                // 5. Final Condition Check: සිදුවීම [Past Margin, Time Window End] අතර තිබිය යුතුය
                 if (scheduledTime.isSameOrAfter(pastMargin) && scheduledTime.isBefore(timeWindowEnd)) {
                     upcomingEvents.push({
                         ...details,
-                        // නිවැරදි වේලාව 24-hour format එකෙන් යැවීම
                         scheduledTime: scheduledTime.format('HH:mm:ss'), 
                     });
+                     // [FOUND] Log
+                    console.log(`[FOUND] Upcoming event: ${details.title} at ${scheduledTime.format('HH:mm:ss')}`);
                 }
             } catch (e) {
                 console.error(`Fatal Time parsing error for ${details.title}:`, e.message);
@@ -304,93 +311,92 @@ async function sendCompletedNews(event) {
     }
 }
 
+// --- Status Check Logic ---
 
-// 🛑 ප්‍රධාන Logic කොටස
-async function mainLogic(env) {
-    const UPCOMING_KEY = 'SENT_UPCOMING_IDS'; 
-    const COMPLETED_KEY = 'LAST_COMPLETED_ID';
-    const kvStore = env.FOREX_HISTORY; 
+/**
+ * KV Store එකේ තත්ත්වය සහ ID පෙන්වයි.
+ */
+async function handleStatusRequest(env) {
+    const kvStore = env.FOREX_HISTORY;
 
-    // KV Binding ගැටලුව සඳහා ආරක්ෂාව
     if (!kvStore) {
-        console.error("KV Binding Error: env.FOREX_HISTORY is undefined. Check wrangler.toml and Dashboard bindings.");
-        return;
+        return new Response("KV Binding Error: FOREX_HISTORY is missing.", { status: 500 });
     }
 
     try {
-        // --- 1. Upcoming Alerts Logic ---
-        
-        const upcomingEvents = await getUpcomingEvents();
-        let sentUpcomingIdsJson = await kvStore.get(UPCOMING_KEY);
-        let sentUpcomingIds = sentUpcomingIdsJson ? JSON.parse(sentUpcomingIdsJson) : {};
-        let newAlertsSent = false;
-        
-        if (upcomingEvents.length > 0) {
-            for (const event of upcomingEvents) {
-                if (!sentUpcomingIds[event.id]) {
-                    console.log("Found NEW upcoming event. Attempting to send to Telegram:", event.id, event.title);
-                    const success = await sendUpcomingAlert(event);
-                    if (success) {
-                        sentUpcomingIds[event.id] = moment().tz(TIMEZONE).unix();
-                        newAlertsSent = true;
-                    }
-                }
-            }
-        }
+        const lastCompletedId = await kvStore.get(COMPLETED_KEY);
+        const sentUpcomingIdsJson = await kvStore.get(UPCOMING_KEY);
+        const sentUpcomingIds = sentUpcomingIdsJson ? JSON.parse(sentUpcomingIdsJson) : {};
 
-        // KV Update (Upcoming)
-        if (newAlertsSent || Object.keys(sentUpcomingIds).length > 0) {
-            // පැය 24 කට වඩා පැරණි ID ඉවත් කිරීම
-            const yesterday = moment().tz(TIMEZONE).subtract(1, 'day').unix();
-            for (const id in sentUpcomingIds) {
-                if (sentUpcomingIds[id] < yesterday) {
-                    delete sentUpcomingIds[id];
-                }
-            }
-            await kvStore.put(UPCOMING_KEY, JSON.stringify(sentUpcomingIds));
-        } else {
-             console.log("No new upcoming alerts to send.");
-        }
+        let statusHtml = `
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Forex Bot Status</title>
+                <style>
+                    body { font-family: Arial, sans-serif; background-color: #f4f4f4; color: #333; margin: 20px; }
+                    .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); }
+                    h2 { color: #007bff; border-bottom: 2px solid #007bff; padding-bottom: 5px; }
+                    pre { background-color: #eee; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; }
+                    .success { color: green; font-weight: bold; }
+                    .error { color: red; font-weight: bold; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>Forex Alert Worker Status (Colombo Time)</h1>
+                    <p>Current Time: ${moment().tz(TIMEZONE).format('YYYY-MM-DD HH:mm:ss')}</p>
 
-        // --- 2. Completed News Logic ---
+                    <h2>Last Completed Event ID</h2>
+                    <p>Last Sent Completed ID: <span class="${lastCompletedId ? 'success' : 'error'}">${lastCompletedId || 'N/A (KV is empty)'}</span></p>
 
-        const completedEvent = await getLatestCompletedEvent();
+                    <h2>Sent Upcoming Event IDs (${Object.keys(sentUpcomingIds).length} Total)</h2>
+                    <pre>${JSON.stringify(sentUpcomingIds, null, 2)}</pre>
 
-        if (completedEvent) {
-            const lastCompletedId = await kvStore.get(COMPLETED_KEY);
-            
-            if (lastCompletedId !== completedEvent.id) {
-                console.log("Found NEW completed event. Attempting to send to Telegram:", completedEvent.id);
-                
-                const success = await sendCompletedNews(completedEvent);
-                
-                if (success) {
-                    // නව ID එක KV එකට ලිවීම
-                    await kvStore.put(COMPLETED_KEY, completedEvent.id);
-                    console.log(`Successfully saved NEW completed event ID ${completedEvent.id} to KV.`);
-                }
-            } else {
-                 console.log(`Completed event ${completedEvent.id} already sent. Skipping.`);
-            }
+                    <p><i>Note: IDs older than 24 hours are automatically cleaned up.</i></p>
+                    
+                    <h2>Manual Trigger</h2>
+                    <p>Run Main Logic: <a href="/trigger" target="_blank">Click Here</a> or access: <code>/trigger</code></p>
+                </div>
+            </body>
+            </html>
+        `;
 
-        } else {
-            console.log("No new completed event found.");
-        }
+        return new Response(statusHtml, {
+            headers: { 'Content-Type': 'text/html' },
+        });
 
     } catch (e) {
-        console.error("Main logic error (General):", e.message);
+        console.error("Error reading KV for status:", e.message);
+        return new Response(`Error reading KV: ${e.message}`, { status: 500 });
     }
 }
+
 
 // 🛑 CLOUDFLARE WORKER EXPORT
 export default {
     
-    // fetch සහ scheduled යන දෙකෙහිම env object එක mainLogic වෙත යැවිය යුතුය.
     async fetch(request, env, ctx) {
-        ctx.waitUntil(mainLogic(env));
-        return new Response("Forex Scraper Logic initiated successfully via Manual HTTP Request.", { status: 200 });
+        const url = new URL(request.url);
+        
+        // --- Status Check (/status or ?status) ---
+        if (url.pathname === '/status' || url.search === '?status') {
+            return handleStatusRequest(env);
+        }
+        
+        // --- Manual Trigger (Root / or /trigger) ---
+        if (url.pathname === '/' || url.pathname === '/trigger') {
+            ctx.waitUntil(mainLogic(env));
+            return new Response("Forex Scraper Logic initiated successfully via HTTP request. Check logs for results or /status for KV data.", { status: 200 });
+        }
+        
+        // වෙනත් Path සඳහා
+        return new Response("404 Not Found. Use the root URL, /trigger or /status.", { status: 404 });
     },
 
+    // --- Cron Trigger ---
     async scheduled(event, env, ctx) {
         ctx.waitUntil(mainLogic(env)); 
     }
