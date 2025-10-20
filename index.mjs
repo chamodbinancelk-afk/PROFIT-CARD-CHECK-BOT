@@ -111,10 +111,11 @@ function extractEventDetails(row) {
     };
 }
 
-// --- Upcoming Events Logic (Final Fix with Strict Year and Time Filtering) ---
+// --- Upcoming Events Logic (Final Robust Fix: 5 Hour Window) ---
 
 /**
  * ඊළඟ මිනිත්තු 305 (පැය 5 යි විනාඩි 5) තුළ ඇති සිදුවීම් සොයා ගනී.
+ * මෙම Logic එකේ Year Fixing Logic එක වඩාත් තහවුරු කර ඇත.
  */
 async function getUpcomingEvents() {
     try {
@@ -145,11 +146,11 @@ async function getUpcomingEvents() {
                  let parsedDate = moment.tz(dateText, "ddd, MMM DD", TIMEZONE);
                  
                  if (parsedDate.isValid()) {
-                     // 🛑 වැදගත්: Year එක නිවැරදි කිරීම
+                     // 🛑 වඩාත් තදින් Year එක Set කිරීම
                      parsedDate.year(currentTime.year());
                      
-                     // නවතම දිනය වර්තමාන දිනයට වඩා අතීතයේ නම්, එය ලබන වසරේ දිනයක් විය හැකියි.
-                     if (parsedDate.isBefore(currentTime.clone().subtract(6, 'months'))) {
+                     // නවතම දිනය වර්තමාන දිනයට වඩා *දින 360ක්* අතීතයේ නම් (තවම Calendar year එක update කර නොමැති නම්), එය ලබන වසරේ දිනයක් විය හැකියි.
+                     if (parsedDate.isBefore(currentTime.clone().subtract(360, 'days'))) {
                          parsedDate.add(1, 'year');
                      }
                      
@@ -174,6 +175,7 @@ async function getUpcomingEvents() {
                 const timeString = details.timeStr;
 
                 // Combine date context and time string
+                // 🛑 Year Setting එක Date Context තුළට ගිය නිසා, මෙතනින් Year එක නිවැරදි වේ.
                 scheduledTime = moment.tz(`${dateString} ${timeString}`, 'YYYY-MM-DD h:mma', TIMEZONE);
 
                 if (!scheduledTime.isValid()) {
@@ -183,10 +185,10 @@ async function getUpcomingEvents() {
                 
                 // 4. Time Validation and Filtering
                 
-                // Past Margin එක විනාඩි 5ක් අතීතයට ගැනීම. (සෑම විටම Alert යවන්නේ *අනාගත* සිදුවීම් සඳහා පමණයි)
+                // Past Margin එක විනාඩි 5ක් අතීතයට ගැනීම.
                 const pastMargin = currentTime.clone().subtract(5, 'minutes'); 
                 
-                // [DEBUG] Log: සිදුවීම් පරීක්ෂා කරන ආකාරය
+                // [DEBUG] Log:
                 console.log(`[DEBUG] Checking event: ${details.title}. Scheduled: ${scheduledTime.format('YYYY-MM-DD HH:mm:ss')}, Current: ${currentTime.format('YYYY-MM-DD HH:mm:ss')}.`);
 
                 // 5. Final Condition Check: සිදුවීම [Past Margin, Time Window End] අතර තිබිය යුතුය
@@ -217,12 +219,22 @@ async function getUpcomingEvents() {
 async function sendUpcomingAlert(event) {
     const impactLevel = getImpactLevel(event.impact);
 
-    // වේලාවට ඉතිරි කාලය ගණනය කිරීම (Telegram පණිවිඩයට අවශ්‍ය නම්)
-    const eventTime = moment.tz(`${event.scheduledTime}`, 'HH:mm:ss', TIMEZONE);
-    const timeRemaining = moment.duration(eventTime.diff(moment().tz(TIMEZONE)));
+    // වේලාවට ඉතිරි කාලය ගණනය කිරීම
+    // මෙහිදී අපි Date Context එක නැවත ලබාගෙන නිවැරදි ඉතිරි කාලය ගණනය කරමු.
+    const now = moment().tz(TIMEZONE);
+    let eventDateTime = moment.tz(`${now.format('YYYY-MM-DD')} ${event.scheduledTime}`, 'YYYY-MM-DD HH:mm:ss', TIMEZONE);
+
+    // Event එක දැනටමත් අද දින අතීත වී ඇත්නම්, එය හෙට දින සිදුවීමක් විය හැකියි.
+    // (මෙම Alert Window එක තුළදී අපට ඊයේ සිදුවීම් filter කළා)
+    if (eventDateTime.isBefore(now.clone().subtract(5, 'minutes'))) {
+        eventDateTime.add(1, 'day');
+    }
+    
+    const timeRemaining = moment.duration(eventDateTime.diff(now));
     const remainingText = timeRemaining.asMilliseconds() > 0 
         ? `${Math.floor(timeRemaining.asHours())}h ${timeRemaining.minutes()}m` 
         : 'now';
+
 
     const msg = `🔔 *Upcoming Economic Alert* 🔔
 
@@ -254,7 +266,7 @@ async function sendUpcomingAlert(event) {
     }
 }
 
-// --- Completed Events Logic ---
+// --- Completed Events Logic (No Change) ---
 
 /**
  * නවතම සම්පූර්ණ කළ සිදුවීම සොයා ගනී.
@@ -327,7 +339,7 @@ async function sendCompletedNews(event) {
     }
 }
 
-// --- Status Check Logic ---
+// --- Status Check Logic (No Change) ---
 
 /**
  * KV Store එකේ තත්ත්වය සහ ID පෙන්වයි.
