@@ -178,7 +178,7 @@ async function getUpcomingEvents() {
                 // Past Margin එක පැය 2ක් අතීතයට ගැනීම (අතීත සිදුවීම් filter කිරීමට)
                 const pastMargin = currentTime.clone().subtract(120, 'minutes'); 
                 
-                // [DEBUG] Log
+                // [DEBUG] Log: මෙය Cloudflare Logs වලට යනු ඇත.
                 console.log(`[DEBUG] Checking event: ${details.title}. Scheduled: ${scheduledTime.format('YYYY-MM-DD HH:mm:ss')}, Current: ${currentTime.format('YYYY-MM-DD HH:mm:ss')}.`);
 
                 // 5. Final Condition Check: සිදුවීම [Past Margin, Time Window End] අතර තිබිය යුතුය
@@ -187,7 +187,7 @@ async function getUpcomingEvents() {
                         ...details,
                         scheduledTime: scheduledTime.format('HH:mm:ss'), 
                     });
-                     // [FOUND] Log
+                     // [FOUND] Log: මෙය Cloudflare Logs වලට යනු ඇත.
                     console.log(`[FOUND] Upcoming event: ${details.title} at ${scheduledTime.format('HH:mm:ss')}`);
                 }
             } catch (e) {
@@ -328,6 +328,12 @@ async function handleStatusRequest(env) {
         const sentUpcomingIdsJson = await kvStore.get(UPCOMING_KEY);
         const sentUpcomingIds = sentUpcomingIdsJson ? JSON.parse(sentUpcomingIdsJson) : {};
 
+        let upcomingList = '';
+        for (const id in sentUpcomingIds) {
+            const timestamp = moment.unix(sentUpcomingIds[id]).tz(TIMEZONE).format('YYYY-MM-DD HH:mm:ss');
+            upcomingList += `  "${id}": "${timestamp}"\n`;
+        }
+
         let statusHtml = `
             <!DOCTYPE html>
             <html lang="en">
@@ -338,27 +344,32 @@ async function handleStatusRequest(env) {
                 <style>
                     body { font-family: Arial, sans-serif; background-color: #f4f4f4; color: #333; margin: 20px; }
                     .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); }
-                    h2 { color: #007bff; border-bottom: 2px solid #007bff; padding-bottom: 5px; }
-                    pre { background-color: #eee; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; }
+                    h1 { color: #28a745; }
+                    h2 { color: #007bff; border-bottom: 2px solid #007bff; padding-bottom: 5px; margin-top: 20px; }
+                    pre { background-color: #eee; padding: 15px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; font-size: 14px; }
                     .success { color: green; font-weight: bold; }
                     .error { color: red; font-weight: bold; }
+                    .info { color: #6c757d; }
+                    a { color: #007bff; text-decoration: none; }
                 </style>
             </head>
             <body>
                 <div class="container">
-                    <h1>Forex Alert Worker Status (Colombo Time)</h1>
-                    <p>Current Time: ${moment().tz(TIMEZONE).format('YYYY-MM-DD HH:mm:ss')}</p>
+                    <h1>Forex Alert Worker Status</h1>
+                    <p>Current Time (Sri Lanka): <span class="info">${moment().tz(TIMEZONE).format('YYYY-MM-DD HH:mm:ss')}</span></p>
 
-                    <h2>Last Completed Event ID</h2>
-                    <p>Last Sent Completed ID: <span class="${lastCompletedId ? 'success' : 'error'}">${lastCompletedId || 'N/A (KV is empty)'}</span></p>
+                    <h2>Last Completed Event ID (Breaking News)</h2>
+                    <p>ID: <span class="${lastCompletedId ? 'success' : 'error'}">${lastCompletedId || 'N/A (KV is empty)'}</span></p>
 
                     <h2>Sent Upcoming Event IDs (${Object.keys(sentUpcomingIds).length} Total)</h2>
-                    <pre>${JSON.stringify(sentUpcomingIds, null, 2)}</pre>
-
-                    <p><i>Note: IDs older than 24 hours are automatically cleaned up.</i></p>
+                    <pre>{
+${upcomingList}
+}</pre>
+                    <p class="info"><i>IDs are cleaned up after 24 hours. Times are in Sri Lanka Time.</i></p>
                     
-                    <h2>Manual Trigger</h2>
-                    <p>Run Main Logic: <a href="/trigger" target="_blank">Click Here</a> or access: <code>/trigger</code></p>
+                    <h2>Manual Trigger and Functions</h2>
+                    <p>Run Logic Now: <a href="/trigger" target="_blank">/trigger</a></p>
+                    <p>Check Status: <a href="/status" target="_blank">/status</a> (You are here)</p>
                 </div>
             </body>
             </html>
@@ -374,6 +385,81 @@ async function handleStatusRequest(env) {
     }
 }
 
+
+// 🛑 ප්‍රධාන Logic කොටස
+async function mainLogic(env) {
+    const kvStore = env.FOREX_HISTORY; 
+
+    // KV Binding ගැටලුව සඳහා ආරක්ෂාව
+    if (!kvStore) {
+        console.error("KV Binding Error: env.FOREX_HISTORY is undefined. Check wrangler.toml and Dashboard bindings.");
+        return;
+    }
+
+    try {
+        // --- 1. Upcoming Alerts Logic ---
+        
+        const upcomingEvents = await getUpcomingEvents();
+        let sentUpcomingIdsJson = await kvStore.get(UPCOMING_KEY);
+        let sentUpcomingIds = sentUpcomingIdsJson ? JSON.parse(sentUpcomingIdsJson) : {};
+        let newAlertsSent = false;
+        
+        if (upcomingEvents.length > 0) {
+            for (const event of upcomingEvents) {
+                if (!sentUpcomingIds[event.id]) {
+                    console.log("Found NEW upcoming event. Attempting to send to Telegram:", event.id, event.title);
+                    const success = await sendUpcomingAlert(event);
+                    if (success) {
+                        sentUpcomingIds[event.id] = moment().tz(TIMEZONE).unix();
+                        newAlertsSent = true;
+                    }
+                }
+            }
+        }
+
+        // KV Update (Upcoming)
+        if (newAlertsSent || Object.keys(sentUpcomingIds).length > 0) {
+            // පැය 24 කට වඩා පැරණි ID ඉවත් කිරීම
+            const yesterday = moment().tz(TIMEZONE).subtract(1, 'day').unix();
+            for (const id in sentUpcomingIds) {
+                if (sentUpcomingIds[id] < yesterday) {
+                    delete sentUpcomingIds[id];
+                }
+            }
+            await kvStore.put(UPCOMING_KEY, JSON.stringify(sentUpcomingIds));
+        } else {
+             console.log("No new upcoming alerts to send.");
+        }
+
+        // --- 2. Completed News Logic ---
+
+        const completedEvent = await getLatestCompletedEvent();
+
+        if (completedEvent) {
+            const lastCompletedId = await kvStore.get(COMPLETED_KEY);
+            
+            if (lastCompletedId !== completedEvent.id) {
+                console.log("Found NEW completed event. Attempting to send to Telegram:", completedEvent.id);
+                
+                const success = await sendCompletedNews(completedEvent);
+                
+                if (success) {
+                    // නව ID එක KV එකට ලිවීම
+                    await kvStore.put(COMPLETED_KEY, completedEvent.id);
+                    console.log(`Successfully saved NEW completed event ID ${completedEvent.id} to KV.`);
+                }
+            } else {
+                 console.log(`Completed event ${completedEvent.id} already sent. Skipping.`);
+            }
+
+        } else {
+            console.log("No new completed event found.");
+        }
+
+    } catch (e) {
+        console.error("Main logic error (General):", e.message);
+    }
+}
 
 // 🛑 CLOUDFLARE WORKER EXPORT
 export default {
