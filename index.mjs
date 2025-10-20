@@ -110,7 +110,7 @@ function extractEventDetails(row) {
 // --- Upcoming Events Logic ---
 
 /**
- * ඊළඟ මිනිත්තු 60 තුළ ඇති සිදුවීම් සොයා ගනී.
+ * ඊළඟ මිනිත්තු 65 තුළ ඇති සිදුවීම් සොයා ගනී. (FIXED TIME LOGIC)
  */
 async function getUpcomingEvents() {
     try {
@@ -123,7 +123,8 @@ async function getUpcomingEvents() {
         const upcomingEvents = [];
         
         const currentTime = moment().tz(TIMEZONE);
-        const timeWindowEnd = currentTime.clone().add(60, 'minutes'); // ඊළඟ පැය 1 (මිනිත්තු 60) කවුළුව
+        // ඊළඟ මිනිත්තු 65 කවුළුව (මායිම් වේලාවන් නිවැරදිව හසු කර ගැනීමට)
+        const timeWindowEnd = currentTime.clone().add(65, 'minutes'); 
         let eventDate = currentTime.clone().startOf('day'); 
 
         rows.each((i, el) => {
@@ -133,7 +134,8 @@ async function getUpcomingEvents() {
             // දිනය වෙනස් වුවහොත් eventDate යාවත්කාලීන කිරීම (Date Rows)
             if (rowClass.includes('calendar__row--date')) {
                  const dateText = row.find('.calendar__cell').text().trim();
-                 if (!dateText.includes("Today") && !dateText.includes("Tomorrow")) { 
+                 if (!dateText.includes("Today")) { 
+                     // උදා: Mon, Oct 20 වැනි format එක පාර්ස් කරයි.
                      const parsedDate = moment.tz(dateText, "ddd, MMM DD", TIMEZONE);
                      if (parsedDate.isValid()) {
                          eventDate = parsedDate.startOf('day');
@@ -143,8 +145,13 @@ async function getUpcomingEvents() {
             }
 
             const details = extractEventDetails(row);
-            // Completed නැති, Time සහිත සිදුවීම් පමණක් සලකයි.
-            if (!details || !details.timeStr || details.timeStr === 'All Day' || details.actual !== '-') return;
+            
+            // Time එකක් නොමැති නම් හෝ 'All Day' නම් මග හරින්න
+            if (!details || !details.timeStr || details.timeStr === 'All Day') return;
+
+            // Actual අගය තිබේ නම් (එනම් Completed නම්) Upcoming ලෙස නොසලකයි
+            // Note: Actual හිස් නම් (Upcoming) ලෙස සලකයි.
+            if (details.actual && details.actual !== '-') return;
             
             let scheduledTime;
             try {
@@ -154,7 +161,7 @@ async function getUpcomingEvents() {
                 // වේලාව අතීතයට අයත් නම් මග හරින්න
                 if (scheduledTime.isBefore(currentTime.clone().subtract(2, 'minutes'))) return; 
 
-                // 🛑 ඊළඟ මිනිත්තු 60 තුළ තිබේ නම් තෝරන්න
+                // 🛑 ඊළඟ මිනිත්තු 65 තුළ තිබේ නම් තෝරන්න
                 if (scheduledTime.isSameOrAfter(currentTime) && scheduledTime.isBefore(timeWindowEnd)) {
                     upcomingEvents.push({
                         ...details,
@@ -293,6 +300,7 @@ async function mainLogic(env) {
     // KV Binding ගැටලුව සඳහා ආරක්ෂාව
     if (!kvStore) {
         console.error("KV Binding Error: env.FOREX_HISTORY is undefined. Check wrangler.toml and Dashboard bindings.");
+        // KV නොමැතිව ධාවනය වීම නවත්වයි
         return;
     }
 
