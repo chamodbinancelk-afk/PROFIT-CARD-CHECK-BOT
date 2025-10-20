@@ -115,7 +115,6 @@ function extractEventDetails(row) {
 
 /**
  * ඊළඟ මිනිත්තු 305 (පැය 5 යි විනාඩි 5) තුළ ඇති සිදුවීම් සොයා ගනී.
- * මෙම Logic එකේ Year Fixing Logic එක වඩාත් තහවුරු කර ඇත.
  */
 async function getUpcomingEvents() {
     try {
@@ -128,7 +127,7 @@ async function getUpcomingEvents() {
         const upcomingEvents = [];
         
         const currentTime = moment().tz(TIMEZONE);
-        // 🛑 Alert Window: පැය 5 යි විනාඩි 5 (305 minutes)
+        // 🛑 Alert Window: පැය 5 යි විනාඩි 5 (305 minutes) - සිදුවීම ආරම්භ වන මොහොත දක්වා
         const timeWindowEnd = currentTime.clone().add(305, 'minutes'); 
         
         // Date Context: අද දින ලෙස ආරම්භ කරයි
@@ -142,18 +141,29 @@ async function getUpcomingEvents() {
             if (rowClass.includes('calendar__row--date')) {
                  const dateText = row.find('.calendar__cell').text().trim();
                  
-                 // Date text පාර්ස් කිරීම (e.g., "Mon, Oct 20")
-                 let parsedDate = moment.tz(dateText, "ddd, MMM DD", TIMEZONE);
+                 let parsedDate;
                  
-                 if (parsedDate.isValid()) {
-                     // 🛑 වඩාත් තදින් Year එක Set කිරීම
-                     parsedDate.year(currentTime.year());
+                 // 🛑 "Today" සහ "Tomorrow" Handling
+                 if (dateText.includes('Today')) {
+                     parsedDate = currentTime.clone().startOf('day');
+                 } else if (dateText.includes('Tomorrow')) {
+                     parsedDate = currentTime.clone().add(1, 'day').startOf('day');
+                 } else {
+                     // සාමාන්‍ය Date Parsing: "Mon, Oct 20"
+                     parsedDate = moment.tz(dateText, "ddd, MMM DD", TIMEZONE);
                      
-                     // නවතම දිනය වර්තමාන දිනයට වඩා *දින 360ක්* අතීතයේ නම් (තවම Calendar year එක update කර නොමැති නම්), එය ලබන වසරේ දිනයක් විය හැකියි.
-                     if (parsedDate.isBefore(currentTime.clone().subtract(360, 'days'))) {
-                         parsedDate.add(1, 'year');
+                     if (parsedDate.isValid()) {
+                         // Year එක අනිවාර්යයෙන්ම Current Year එකට Set කිරීම
+                         parsedDate.year(currentTime.year());
+                         
+                         // වසරක් ඈතට ගොස් ඇති බව පෙනේ නම් (වසර වෙනස් වීමේදී), එය නිවැරදි කිරීම
+                         if (parsedDate.isBefore(currentTime.clone().subtract(30, 'days'))) {
+                             parsedDate.add(1, 'year');
+                         }
                      }
-                     
+                 }
+                 
+                 if (parsedDate && parsedDate.isValid()) {
                      currentDateContext = parsedDate.startOf('day');
                  }
                  return; // Date rows මග හැරීම
@@ -175,7 +185,7 @@ async function getUpcomingEvents() {
                 const timeString = details.timeStr;
 
                 // Combine date context and time string
-                // 🛑 Year Setting එක Date Context තුළට ගිය නිසා, මෙතනින් Year එක නිවැරදි වේ.
+                // Date String එකේ Year එක නිවැරදි නිසා, Timezone එකට අනුව පාර්ස් කරයි
                 scheduledTime = moment.tz(`${dateString} ${timeString}`, 'YYYY-MM-DD h:mma', TIMEZONE);
 
                 if (!scheduledTime.isValid()) {
@@ -185,21 +195,23 @@ async function getUpcomingEvents() {
                 
                 // 4. Time Validation and Filtering
                 
-                // Past Margin එක විනාඩි 5ක් අතීතයට ගැනීම.
+                // Past Margin එක විනාඩි 5ක් අතීතයට ගැනීම (පැරණි සිදුවීම් මග හැරීමට)
                 const pastMargin = currentTime.clone().subtract(5, 'minutes'); 
                 
                 // [DEBUG] Log:
-                console.log(`[DEBUG] Checking event: ${details.title}. Scheduled: ${scheduledTime.format('YYYY-MM-DD HH:mm:ss')}, Current: ${currentTime.format('YYYY-MM-DD HH:mm:ss')}.`);
+                console.log(`[DEBUG] Checking event: ${details.title}. Scheduled: ${scheduledTime.format('YYYY-MM-DD HH:mm:ss')}, Current: ${currentTime.format('YYYY-MM-DD HH:mm:ss')}. TimeWindowEnd: ${timeWindowEnd.format('YYYY-MM-DD HH:mm:ss')}`);
 
                 // 5. Final Condition Check: සිදුවීම [Past Margin, Time Window End] අතර තිබිය යුතුය
                 // මෙය 'පැය 5ක් ඇතුළත' යන කොන්දේසිය තෘප්ත කරයි.
                 if (scheduledTime.isSameOrAfter(pastMargin) && scheduledTime.isBefore(timeWindowEnd)) {
                     upcomingEvents.push({
                         ...details,
+                        // Full date/time එකම pass කරමු, timeStr වෙනුවට
+                        scheduledTimeFull: scheduledTime.format('YYYY-MM-DD HH:mm:ss'), 
                         scheduledTime: scheduledTime.format('HH:mm:ss'), 
                     });
                      // [FOUND] Log
-                    console.log(`[FOUND] Upcoming event (within 5H window): ${details.title} at ${scheduledTime.format('HH:mm:ss')}`);
+                    console.log(`[FOUND] Upcoming event (within 5H window): ${details.title} at ${scheduledTime.format('YYYY-MM-DD HH:mm:ss')}`);
                 }
             } catch (e) {
                 console.error(`Fatal Time parsing error for ${details.title}:`, e.message);
@@ -220,17 +232,12 @@ async function sendUpcomingAlert(event) {
     const impactLevel = getImpactLevel(event.impact);
 
     // වේලාවට ඉතිරි කාලය ගණනය කිරීම
-    // මෙහිදී අපි Date Context එක නැවත ලබාගෙන නිවැරදි ඉතිරි කාලය ගණනය කරමු.
     const now = moment().tz(TIMEZONE);
-    let eventDateTime = moment.tz(`${now.format('YYYY-MM-DD')} ${event.scheduledTime}`, 'YYYY-MM-DD HH:mm:ss', TIMEZONE);
-
-    // Event එක දැනටමත් අද දින අතීත වී ඇත්නම්, එය හෙට දින සිදුවීමක් විය හැකියි.
-    // (මෙම Alert Window එක තුළදී අපට ඊයේ සිදුවීම් filter කළා)
-    if (eventDateTime.isBefore(now.clone().subtract(5, 'minutes'))) {
-        eventDateTime.add(1, 'day');
-    }
+    // 🛑 Full Date/Time භාවිතා කිරීම (event.scheduledTimeFull)
+    const eventDateTime = moment.tz(event.scheduledTimeFull, 'YYYY-MM-DD HH:mm:ss', TIMEZONE);
     
     const timeRemaining = moment.duration(eventDateTime.diff(now));
+    
     const remainingText = timeRemaining.asMilliseconds() > 0 
         ? `${Math.floor(timeRemaining.asHours())}h ${timeRemaining.minutes()}m` 
         : 'now';
@@ -238,7 +245,7 @@ async function sendUpcomingAlert(event) {
 
     const msg = `🔔 *Upcoming Economic Alert* 🔔
 
-⏰ *Scheduled Time (Colombo):* ${event.scheduledTime}
+⏰ *Scheduled Time (Colombo):* ${eventDateTime.format('YYYY-MM-DD HH:mm:ss')}
 ⏳ *Time Remaining:* ${remainingText}
 
 🌍 *Currency:* ${event.currency}
