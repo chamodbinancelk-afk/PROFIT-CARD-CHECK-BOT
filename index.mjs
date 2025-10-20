@@ -65,7 +65,6 @@ function analyzeComparison(actual, previous) {
 
 /**
  * HTML එකෙන් Event විස්තර ලබා ගැනීමේ පොදු Logic එක.
- * මෙය Upcoming සහ Completed යන දෙකටම පොදුවේ භාවිතා කරයි.
  */
 function extractEventDetails(row) {
     const eventId = row.attr('data-event-id');
@@ -114,53 +113,64 @@ function extractEventDetails(row) {
  * ඊළඟ මිනිත්තු 60 තුළ ඇති සිදුවීම් සොයා ගනී.
  */
 async function getUpcomingEvents() {
-    const response = await fetch(FOREX_URL, { headers: { 'User-Agent': 'Cloudflare Worker Scraper' } });
-    if (!response.ok) return [];
-    
-    const html = await response.text();
-    const $ = load(html);
-    const rows = $('.calendar__row');
-    const upcomingEvents = [];
-    
-    const currentTime = moment().tz(TIMEZONE);
-    const timeWindowEnd = currentTime.clone().add(1, 'hour');
-    let eventDate = currentTime.clone().startOf('day');
-
-    rows.each((i, el) => {
-        const row = $(el);
-        const rowClass = row.attr('class') || '';
-
-        // දිනය වෙනස් වුවහොත් eventDate යාවත්කාලීන කිරීම
-        if (rowClass.includes('calendar__row--date')) {
-             const dateText = row.find('.calendar__cell').text().trim();
-             const parsedDate = moment.tz(dateText, "ddd, MMM DD", TIMEZONE);
-             if (parsedDate.isValid()) {
-                 eventDate = parsedDate.startOf('day');
-             }
-             return; 
-        }
-
-        const details = extractEventDetails(row);
-        if (!details || !details.timeStr || details.timeStr === 'All Day' || details.actual !== '-') return;
+    try {
+        const response = await fetch(FOREX_URL, { headers: { 'User-Agent': 'Cloudflare Worker Scraper' } });
+        if (!response.ok) return [];
         
-        let scheduledTime;
-        try {
-            scheduledTime = moment.tz(eventDate.format('YYYY-MM-DD') + ' ' + details.timeStr, 'YYYY-MM-DD h:mma', TIMEZONE);
-            
-            if (scheduledTime.isBefore(currentTime)) return; 
-            
-            if (scheduledTime.isBetween(currentTime, timeWindowEnd, null, '[]')) {
-                upcomingEvents.push({
-                    ...details,
-                    scheduledTime: scheduledTime.format('HH:mm:ss'),
-                });
+        const html = await response.text();
+        const $ = load(html);
+        const rows = $('.calendar__row');
+        const upcomingEvents = [];
+        
+        const currentTime = moment().tz(TIMEZONE);
+        const timeWindowEnd = currentTime.clone().add(60, 'minutes'); // ඊළඟ පැය 1 (මිනිත්තු 60) කවුළුව
+        let eventDate = currentTime.clone().startOf('day'); 
+
+        rows.each((i, el) => {
+            const row = $(el);
+            const rowClass = row.attr('class') || '';
+
+            // දිනය වෙනස් වුවහොත් eventDate යාවත්කාලීන කිරීම (Date Rows)
+            if (rowClass.includes('calendar__row--date')) {
+                 const dateText = row.find('.calendar__cell').text().trim();
+                 if (!dateText.includes("Today") && !dateText.includes("Tomorrow")) { 
+                     const parsedDate = moment.tz(dateText, "ddd, MMM DD", TIMEZONE);
+                     if (parsedDate.isValid()) {
+                         eventDate = parsedDate.startOf('day');
+                     }
+                 }
+                 return; 
             }
-        } catch (e) {
-            // වේලා පාර්ස් කිරීමේ දෝෂ මග හැරීම
-        }
-    });
-    
-    return upcomingEvents;
+
+            const details = extractEventDetails(row);
+            // Completed නැති, Time සහිත සිදුවීම් පමණක් සලකයි.
+            if (!details || !details.timeStr || details.timeStr === 'All Day' || details.actual !== '-') return;
+            
+            let scheduledTime;
+            try {
+                // වේලාව පාර්ස් කිරීම
+                scheduledTime = moment.tz(eventDate.format('YYYY-MM-DD') + ' ' + details.timeStr, 'YYYY-MM-DD h:mma', TIMEZONE);
+
+                // වේලාව අතීතයට අයත් නම් මග හරින්න
+                if (scheduledTime.isBefore(currentTime.clone().subtract(2, 'minutes'))) return; 
+
+                // 🛑 ඊළඟ මිනිත්තු 60 තුළ තිබේ නම් තෝරන්න
+                if (scheduledTime.isSameOrAfter(currentTime) && scheduledTime.isBefore(timeWindowEnd)) {
+                    upcomingEvents.push({
+                        ...details,
+                        scheduledTime: scheduledTime.format('HH:mm:ss'), 
+                    });
+                }
+            } catch (e) {
+                // Time parsing errors ignored
+            }
+        });
+        
+        return upcomingEvents;
+    } catch (error) {
+        console.error("Error fetching or parsing data for upcoming events:", error.message);
+        return [];
+    }
 }
 
 /**
@@ -184,8 +194,6 @@ async function sendUpcomingAlert(event) {
 ⏳ *Get Ready to Trade!*
 🚀 *Dev : Mr Chamo 🇱🇰*`;
 
-    // (Telegram API call logic නොවෙනස්ව පවතී)
-    // ... [sendUpcomingAlert ශ්‍රිතයේ පහළ කොටස] ...
     try {
         const payload = { chat_id: CHAT_ID, text: msg, parse_mode: "Markdown" };
         const response = await fetch(TELEGRAM_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -194,7 +202,6 @@ async function sendUpcomingAlert(event) {
             const errorText = await response.text();
             throw new Error(`Telegram API failed (Upcoming): ${response.status} - ${errorText}`);
         }
-        console.log(`Sent Upcoming Alert: ${event.id}`);
         return true;
     } catch (error) {
         console.error("Error sending Telegram message (Upcoming):", error.message);
@@ -208,24 +215,29 @@ async function sendUpcomingAlert(event) {
  * නවතම සම්පූර්ණ කළ සිදුවීම සොයා ගනී.
  */
 async function getLatestCompletedEvent() {
-    const response = await fetch(FOREX_URL, { headers: { 'User-Agent': 'Cloudflare Worker Scraper' } });
-    if (!response.ok) return null;
-    
-    const html = await response.text();
-    const $ = load(html);
-    const rows = $('.calendar__row');
+    try {
+        const response = await fetch(FOREX_URL, { headers: { 'User-Agent': 'Cloudflare Worker Scraper' } });
+        if (!response.ok) return null;
+        
+        const html = await response.text();
+        const $ = load(html);
+        const rows = $('.calendar__row');
 
-    // පිටුපසින් ඉදිරියට ගොස් නවතම Actual අගය සහිත සිදුවීම සොයයි
-    for (let i = rows.length - 1; i >= 0; i--) {
-        const row = rows.eq(i);
-        const details = extractEventDetails(row);
+        // පිටුපසින් ඉදිරියට ගොස් නවතම Actual අගය සහිත සිදුවීම සොයයි
+        for (let i = rows.length - 1; i >= 0; i--) {
+            const row = rows.eq(i);
+            const details = extractEventDetails(row);
 
-        // Actual අගය හිස් නොවන හෝ '-' නොවන සිදුවීම් තෝරා ගැනීම
-        if (details && details.actual && details.actual !== "-") {
-            return details;
+            // Actual අගය හිස් නොවන හෝ '-' නොවන සිදුවීම් තෝරා ගැනීම
+            if (details && details.actual && details.actual !== "-") {
+                return details;
+            }
         }
+        return null;
+    } catch (error) {
+         console.error("Error fetching or parsing data for completed events:", error.message);
+        return null;
     }
-    return null;
 }
 
 /**
@@ -255,8 +267,6 @@ async function sendCompletedNews(event) {
 
 🚀 *Dev : Mr Chamo 🇱🇰*`;
 
-    // (Telegram API call logic නොවෙනස්ව පවතී)
-    // ... [sendCompletedNews ශ්‍රිතයේ පහළ කොටස] ...
     try {
         const payload = { chat_id: CHAT_ID, text: msg, parse_mode: "Markdown" };
         const response = await fetch(TELEGRAM_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -265,7 +275,6 @@ async function sendCompletedNews(event) {
             const errorText = await response.text();
             throw new Error(`Telegram API failed (Completed): ${response.status} - ${errorText}`);
         }
-        console.log(`Sent Completed News: ${event.id}`);
         return true;
     } catch (error) {
         console.error("Error sending Telegram message (Completed):", error.message);
@@ -280,6 +289,12 @@ async function mainLogic(env) {
     const UPCOMING_KEY = 'SENT_UPCOMING_IDS'; 
     const COMPLETED_KEY = 'LAST_COMPLETED_ID';
     const kvStore = env.FOREX_HISTORY; 
+
+    // KV Binding ගැටලුව සඳහා ආරක්ෂාව
+    if (!kvStore) {
+        console.error("KV Binding Error: env.FOREX_HISTORY is undefined. Check wrangler.toml and Dashboard bindings.");
+        return;
+    }
 
     try {
         // --- 1. Upcoming Alerts Logic ---
@@ -309,6 +324,8 @@ async function mainLogic(env) {
                 }
             }
             await kvStore.put(UPCOMING_KEY, JSON.stringify(sentUpcomingIds));
+        } else {
+             console.log("No new upcoming alerts to send.");
         }
 
         // --- 2. Completed News Logic ---
@@ -337,7 +354,7 @@ async function mainLogic(env) {
         }
 
     } catch (e) {
-        console.error("Main logic error (KV or General):", e.message);
+        console.error("Main logic error (General):", e.message);
     }
 }
 
