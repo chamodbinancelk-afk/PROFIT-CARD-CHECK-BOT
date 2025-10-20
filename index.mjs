@@ -1,3 +1,4 @@
+// required libraries
 import { load } from 'cheerio';
 import moment from 'moment-timezone';
 
@@ -31,8 +32,9 @@ function getImpactLevel(impact) {
  */
 function analyzeComparison(actual, previous) {
     try {
-        const a = parseFloat(actual.replace('%', '').trim());
-        const p = parseFloat(previous.replace('%', '').trim());
+        // Actual/Previous වල ඇති % සලකුණු ඉවත් කර සංඛ්‍යා ලෙස පාර්ස් කිරීම
+        const a = parseFloat(actual.replace(/[^0-9.-]/g, ''));
+        const p = parseFloat(previous.replace(/[^0-9.-]/g, ''));
 
         if (isNaN(a) || isNaN(p)) {
             throw new Error("Invalid number format");
@@ -106,7 +108,7 @@ function extractEventDetails(row) {
     };
 }
 
-// --- Upcoming Events Logic ---
+// --- Upcoming Events Logic (Final Fixed Version) ---
 
 /**
  * ඊළඟ මිනිත්තු 365 (පැය 6 යි විනාඩි 5) තුළ ඇති සිදුවීම් සොයා ගනී.
@@ -122,55 +124,65 @@ async function getUpcomingEvents() {
         const upcomingEvents = [];
         
         const currentTime = moment().tz(TIMEZONE);
-        // 🛑 මෙහිදී Time Window එක පැය 6 යි විනාඩි 5 (මිනිත්තු 365) ලෙස සකස් කර ඇත.
+        // Alert Window: 6 hours and 5 minutes (365 minutes)
         const timeWindowEnd = currentTime.clone().add(365, 'minutes'); 
+        
+        // ආරම්භයේදී eventDate අද දවස ලෙස සකස් කිරීම
         let eventDate = currentTime.clone().startOf('day'); 
 
         rows.each((i, el) => {
             const row = $(el);
             const rowClass = row.attr('class') || '';
 
-            // දිනය වෙනස් වුවහොත් eventDate යාවත්කාලීන කිරීම (Date Rows)
+            // 1. Handle Date Rows: Update the current date context
             if (rowClass.includes('calendar__row--date')) {
                  const dateText = row.find('.calendar__cell').text().trim();
-                 if (!dateText.includes("Today")) { 
-                     const parsedDate = moment.tz(dateText, "ddd, MMM DD", TIMEZONE);
-                     if (parsedDate.isValid()) {
-                         eventDate = parsedDate.startOf('day');
-                     }
+                 
+                 // Date text එක පාර්ස් කිරීම (e.g., "Mon, Oct 20") සහ වර්තමාන වසර යෙදීම
+                 const parsedDate = moment.tz(dateText, "ddd, MMM DD", TIMEZONE).year(currentTime.year());
+                 
+                 if (parsedDate.isValid()) {
+                     eventDate = parsedDate.startOf('day');
                  }
-                 return; 
+                 return; // Date rows මග හැරීම
             }
 
             const details = extractEventDetails(row);
             
-            // 1. Details නැත්නම්, මග හරින්න
+            // 2. Initial Checks
             if (!details) return;
+            if (details.actual && details.actual !== '-') return; // Completed නම් මග හැරීම
+            if (!details.timeStr || details.timeStr === 'All Day') return; // Time නැතිනම් මග හැරීම
 
-            // 2. Actual අගය තිබේ නම් (එනම් Completed නම්) Upcoming ලෙස නොසලකයි
-            if (details.actual && details.actual !== '-') return;
-            
-            // 3. Time String එකක් නොමැති නම්, මග හරින්න
-            if (!details.timeStr || details.timeStr === 'All Day') return;
-            
             let scheduledTime;
             try {
-                // වේලාව පාර්ස් කිරීම
-                scheduledTime = moment.tz(eventDate.format('YYYY-MM-DD') + ' ' + details.timeStr, 'YYYY-MM-DD h:mma', TIMEZONE);
+                // 3. Robust Time Combination and Parsing
+                const dateString = eventDate.format('YYYY-MM-DD');
+                const timeString = details.timeStr;
 
-                // 🛑 ආරක්ෂාව: වේලාව අතීතයට අයත් නම් මග හරින්න
-                if (scheduledTime.isBefore(currentTime.clone().subtract(2, 'minutes'))) return; 
+                // Combine date context and time string
+                scheduledTime = moment.tz(`${dateString} ${timeString}`, 'YYYY-MM-DD h:mma', TIMEZONE);
 
-                // 🛑 ඊළඟ මිනිත්තු 365 තුළ තිබේ නම් තෝරන්න
-                if (scheduledTime.isSameOrAfter(currentTime) && scheduledTime.isBefore(timeWindowEnd)) {
+                if (!scheduledTime.isValid()) {
+                    console.warn(`Time parse warning for ${details.title}: Time string "${timeString}" on date "${dateString}" is invalid. Skipping.`);
+                    return; 
+                }
+                
+                // 4. Time Validation and Filtering (Strict)
+                
+                // Cron run ප්‍රමාදයන් සඳහා විනාඩි 5ක ආන්තිකය (margin) ලබා දීම
+                const pastMargin = currentTime.clone().subtract(5, 'minutes');
+                
+                // සිදුවීම [Past Margin, Time Window End] අතර තිබිය යුතුය
+                if (scheduledTime.isSameOrAfter(pastMargin) && scheduledTime.isBefore(timeWindowEnd)) {
                     upcomingEvents.push({
                         ...details,
+                        // නිවැරදි වේලාව 24-hour format එකෙන් යැවීම
                         scheduledTime: scheduledTime.format('HH:mm:ss'), 
                     });
                 }
             } catch (e) {
-                console.error(`Time parsing error for ${details.title} (${details.timeStr}):`, e.message);
-                // Time parsing අසාර්ථක වුවහොත්, එම සිදුවීම මග හරියි.
+                console.error(`Fatal Time parsing error for ${details.title}:`, e.message);
             }
         });
         
@@ -217,7 +229,7 @@ async function sendUpcomingAlert(event) {
     }
 }
 
-// --- Completed Events Logic ---
+// --- Completed Events Logic (Remains robust) ---
 
 /**
  * නවතම සම්පූර්ණ කළ සිදුවීම සොයා ගනී.
@@ -291,9 +303,8 @@ async function sendCompletedNews(event) {
 }
 
 
-// 🛑 ප්‍රධාන Logic කොටස: කාර්යයන් දෙකම මෙහිදී ක්‍රියාත්මක වේ.
+// 🛑 ප්‍රධාන Logic කොටස
 async function mainLogic(env) {
-    // KV Keys දෙකක්
     const UPCOMING_KEY = 'SENT_UPCOMING_IDS'; 
     const COMPLETED_KEY = 'LAST_COMPLETED_ID';
     const kvStore = env.FOREX_HISTORY; 
@@ -301,7 +312,6 @@ async function mainLogic(env) {
     // KV Binding ගැටලුව සඳහා ආරක්ෂාව
     if (!kvStore) {
         console.error("KV Binding Error: env.FOREX_HISTORY is undefined. Check wrangler.toml and Dashboard bindings.");
-        // KV නොමැතිව ධාවනය වීම නවත්වයි
         return;
     }
 
@@ -312,19 +322,22 @@ async function mainLogic(env) {
         let sentUpcomingIdsJson = await kvStore.get(UPCOMING_KEY);
         let sentUpcomingIds = sentUpcomingIdsJson ? JSON.parse(sentUpcomingIdsJson) : {};
         let newAlertsSent = false;
-
-        for (const event of upcomingEvents) {
-            if (!sentUpcomingIds[event.id]) {
-                const success = await sendUpcomingAlert(event);
-                if (success) {
-                    sentUpcomingIds[event.id] = moment().tz(TIMEZONE).unix();
-                    newAlertsSent = true;
+        
+        if (upcomingEvents.length > 0) {
+            for (const event of upcomingEvents) {
+                if (!sentUpcomingIds[event.id]) {
+                    console.log("Found NEW upcoming event. Attempting to send to Telegram:", event.id, event.title);
+                    const success = await sendUpcomingAlert(event);
+                    if (success) {
+                        sentUpcomingIds[event.id] = moment().tz(TIMEZONE).unix();
+                        newAlertsSent = true;
+                    }
                 }
             }
         }
-        
+
         // KV Update (Upcoming)
-        if (newAlertsSent) {
+        if (newAlertsSent || Object.keys(sentUpcomingIds).length > 0) {
             // පැය 24 කට වඩා පැරණි ID ඉවත් කිරීම
             const yesterday = moment().tz(TIMEZONE).subtract(1, 'day').unix();
             for (const id in sentUpcomingIds) {
