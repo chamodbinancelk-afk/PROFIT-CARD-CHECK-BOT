@@ -7,7 +7,7 @@ const BOT_TOKEN = "5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A";
 const CHAT_ID = "-1003111341307";
 const FOREX_URL = "https://www.forexfactory.com/calendar";
 const TELEGRAM_API_URL = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`; 
-const TIMEZONE = 'Asia/Colombo'; // ශ්‍රී ලංකා වේලා කලාපය
+const TIMEZONE = 'Asia/Colombo'; // ශ්‍රී ලංකා වේලා කලාපය (GMT+05:30)
 
 const UPCOMING_KEY = 'SENT_UPCOMING_IDS'; 
 const COMPLETED_KEY = 'LAST_COMPLETED_ID';
@@ -111,10 +111,10 @@ function extractEventDetails(row) {
     };
 }
 
-// --- Upcoming Events Logic (Robust and Final) ---
+// --- Upcoming Events Logic (Final Fix with Strict Year and Time Filtering) ---
 
 /**
- * ඊළඟ මිනිත්තු 365 (පැය 6 යි විනාඩි 5) තුළ ඇති සිදුවීම් සොයා ගනී.
+ * ඊළඟ මිනිත්තු 305 (පැය 5 යි විනාඩි 5) තුළ ඇති සිදුවීම් සොයා ගනී.
  */
 async function getUpcomingEvents() {
     try {
@@ -127,8 +127,8 @@ async function getUpcomingEvents() {
         const upcomingEvents = [];
         
         const currentTime = moment().tz(TIMEZONE);
-        // Alert Window: 6 hours and 5 minutes (365 minutes)
-        const timeWindowEnd = currentTime.clone().add(365, 'minutes'); 
+        // 🛑 Alert Window: පැය 5 යි විනාඩි 5 (305 minutes)
+        const timeWindowEnd = currentTime.clone().add(305, 'minutes'); 
         
         // Date Context: අද දින ලෙස ආරම්භ කරයි
         let currentDateContext = currentTime.clone().startOf('day'); 
@@ -142,9 +142,17 @@ async function getUpcomingEvents() {
                  const dateText = row.find('.calendar__cell').text().trim();
                  
                  // Date text පාර්ස් කිරීම (e.g., "Mon, Oct 20")
-                 const parsedDate = moment.tz(dateText, "ddd, MMM DD", TIMEZONE).year(currentTime.year());
+                 let parsedDate = moment.tz(dateText, "ddd, MMM DD", TIMEZONE);
                  
                  if (parsedDate.isValid()) {
+                     // 🛑 වැදගත්: Year එක නිවැරදි කිරීම
+                     parsedDate.year(currentTime.year());
+                     
+                     // නවතම දිනය වර්තමාන දිනයට වඩා අතීතයේ නම්, එය ලබන වසරේ දිනයක් විය හැකියි.
+                     if (parsedDate.isBefore(currentTime.clone().subtract(6, 'months'))) {
+                         parsedDate.add(1, 'year');
+                     }
+                     
                      currentDateContext = parsedDate.startOf('day');
                  }
                  return; // Date rows මග හැරීම
@@ -175,20 +183,21 @@ async function getUpcomingEvents() {
                 
                 // 4. Time Validation and Filtering
                 
-                // Past Margin එක පැය 2ක් අතීතයට ගැනීම (අතීත සිදුවීම් filter කිරීමට)
-                const pastMargin = currentTime.clone().subtract(120, 'minutes'); 
+                // Past Margin එක විනාඩි 5ක් අතීතයට ගැනීම. (සෑම විටම Alert යවන්නේ *අනාගත* සිදුවීම් සඳහා පමණයි)
+                const pastMargin = currentTime.clone().subtract(5, 'minutes'); 
                 
-                // [DEBUG] Log: මෙය Cloudflare Logs වලට යනු ඇත.
+                // [DEBUG] Log: සිදුවීම් පරීක්ෂා කරන ආකාරය
                 console.log(`[DEBUG] Checking event: ${details.title}. Scheduled: ${scheduledTime.format('YYYY-MM-DD HH:mm:ss')}, Current: ${currentTime.format('YYYY-MM-DD HH:mm:ss')}.`);
 
                 // 5. Final Condition Check: සිදුවීම [Past Margin, Time Window End] අතර තිබිය යුතුය
+                // මෙය 'පැය 5ක් ඇතුළත' යන කොන්දේසිය තෘප්ත කරයි.
                 if (scheduledTime.isSameOrAfter(pastMargin) && scheduledTime.isBefore(timeWindowEnd)) {
                     upcomingEvents.push({
                         ...details,
                         scheduledTime: scheduledTime.format('HH:mm:ss'), 
                     });
-                     // [FOUND] Log: මෙය Cloudflare Logs වලට යනු ඇත.
-                    console.log(`[FOUND] Upcoming event: ${details.title} at ${scheduledTime.format('HH:mm:ss')}`);
+                     // [FOUND] Log
+                    console.log(`[FOUND] Upcoming event (within 5H window): ${details.title} at ${scheduledTime.format('HH:mm:ss')}`);
                 }
             } catch (e) {
                 console.error(`Fatal Time parsing error for ${details.title}:`, e.message);
@@ -208,9 +217,17 @@ async function getUpcomingEvents() {
 async function sendUpcomingAlert(event) {
     const impactLevel = getImpactLevel(event.impact);
 
+    // වේලාවට ඉතිරි කාලය ගණනය කිරීම (Telegram පණිවිඩයට අවශ්‍ය නම්)
+    const eventTime = moment.tz(`${event.scheduledTime}`, 'HH:mm:ss', TIMEZONE);
+    const timeRemaining = moment.duration(eventTime.diff(moment().tz(TIMEZONE)));
+    const remainingText = timeRemaining.asMilliseconds() > 0 
+        ? `${Math.floor(timeRemaining.asHours())}h ${timeRemaining.minutes()}m` 
+        : 'now';
+
     const msg = `🔔 *Upcoming Economic Alert* 🔔
 
 ⏰ *Scheduled Time (Colombo):* ${event.scheduledTime}
+⏳ *Time Remaining:* ${remainingText}
 
 🌍 *Currency:* ${event.currency}
 
@@ -220,7 +237,6 @@ async function sendUpcomingAlert(event) {
 
 🔮 *Forecast:* ${event.forecast || 'N/A'}
 
-⏳ *Get Ready to Trade!*
 🚀 *Dev : Mr Chamo 🇱🇰*`;
 
     try {
