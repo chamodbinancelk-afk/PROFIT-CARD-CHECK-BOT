@@ -32,7 +32,7 @@ function getImpactLevel(impact) {
  */
 function analyzeComparison(actual, previous) {
     try {
-        // Actual/Previous වල ඇති % සලකුණු ඉවත් කර සංඛ්‍යා ලෙස පාර්ස් කිරීම
+        // Actual/Previous වල ඇති % සලකුණු සහ අනෙකුත් අකුරු ඉවත් කර සංඛ්‍යා ලෙස පාර්ස් කිරීම
         const a = parseFloat(actual.replace(/[^0-9.-]/g, ''));
         const p = parseFloat(previous.replace(/[^0-9.-]/g, ''));
 
@@ -108,7 +108,7 @@ function extractEventDetails(row) {
     };
 }
 
-// --- Upcoming Events Logic (Final Fixed Version) ---
+// --- Upcoming Events Logic (Final & Most Robust Time/Date Fix) ---
 
 /**
  * ඊළඟ මිනිත්තු 365 (පැය 6 යි විනාඩි 5) තුළ ඇති සිදුවීම් සොයා ගනී.
@@ -127,8 +127,8 @@ async function getUpcomingEvents() {
         // Alert Window: 6 hours and 5 minutes (365 minutes)
         const timeWindowEnd = currentTime.clone().add(365, 'minutes'); 
         
-        // ආරම්භයේදී eventDate අද දවස ලෙස සකස් කිරීම
-        let eventDate = currentTime.clone().startOf('day'); 
+        // 🛑 නව Date Context විචල්‍යය: අද දින ලෙස ආරම්භ කරයි
+        let currentDateContext = currentTime.clone().startOf('day'); 
 
         rows.each((i, el) => {
             const row = $(el);
@@ -138,11 +138,11 @@ async function getUpcomingEvents() {
             if (rowClass.includes('calendar__row--date')) {
                  const dateText = row.find('.calendar__cell').text().trim();
                  
-                 // Date text එක පාර්ස් කිරීම (e.g., "Mon, Oct 20") සහ වර්තමාන වසර යෙදීම
+                 // Date text පාර්ස් කිරීම (e.g., "Mon, Oct 20")
                  const parsedDate = moment.tz(dateText, "ddd, MMM DD", TIMEZONE).year(currentTime.year());
                  
                  if (parsedDate.isValid()) {
-                     eventDate = parsedDate.startOf('day');
+                     currentDateContext = parsedDate.startOf('day');
                  }
                  return; // Date rows මග හැරීම
             }
@@ -151,13 +151,15 @@ async function getUpcomingEvents() {
             
             // 2. Initial Checks
             if (!details) return;
-            if (details.actual && details.actual !== '-') return; // Completed නම් මග හැරීම
-            if (!details.timeStr || details.timeStr === 'All Day') return; // Time නැතිනම් මග හැරීම
+            // Completed නම් මග හැරීම
+            if (details.actual && details.actual !== "-") return; 
+            // Time නැතිනම් මග හැරීම (උදා: All Day හෝ Tentative)
+            if (!details.timeStr || details.timeStr === 'All Day') return; 
 
             let scheduledTime;
             try {
                 // 3. Robust Time Combination and Parsing
-                const dateString = eventDate.format('YYYY-MM-DD');
+                const dateString = currentDateContext.format('YYYY-MM-DD');
                 const timeString = details.timeStr;
 
                 // Combine date context and time string
@@ -229,7 +231,7 @@ async function sendUpcomingAlert(event) {
     }
 }
 
-// --- Completed Events Logic (Remains robust) ---
+// --- Completed Events Logic ---
 
 /**
  * නවතම සම්පූර්ණ කළ සිදුවීම සොයා ගනී.
