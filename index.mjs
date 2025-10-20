@@ -1,4 +1,3 @@
-// required libraries
 import { load } from 'cheerio';
 import moment from 'moment-timezone';
 
