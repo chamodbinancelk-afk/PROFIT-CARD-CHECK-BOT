@@ -3,3 +3,16 @@ main = "index.mjs"
 compatibility_date = "2025-10-12"
 
 compatibility_flags = ["nodejs_compat"]
+
+# ... (Other settings like name, main, etc.) ...
+
+[[kv_namespaces]]
+binding = "BOT_CONFIG"  # This is the variable name used in the JavaScript code (env.BOT_CONFIG)
+id = "YOUR_KV_NAMESPACE_ID_HERE"  # 🛑 REPLACE WITH YOUR KV NAMESPACE ID (e.g., a long string like 'f72b38...')
+
+[vars]
+# We remove BOT_OWNER_USER_ID from JS and put it here
+BOT_OWNER_USER_ID = 1991997964 # 🛑 REPLACE WITH YOUR ACTUAL TELEGRAM USER ID
+
+# You can also move the Telegram Token here if you prefer to see it in wrangler.toml
+# TELEGRAM_TOKEN = "8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8"
