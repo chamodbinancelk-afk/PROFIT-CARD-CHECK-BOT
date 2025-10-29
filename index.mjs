@@ -28,7 +28,7 @@ const TELEGRAM_API_BASE_URL = 'https://api.telegram.org/bot';
  * Returns the sent message ID or false on failure.
  */
 async function sendRawTelegramMessage(token, chatId, message, replyToId = null, keyboard = null) {
-    // 🎯 FIX: Correct URL construction to avoid Invalid URL errors
+    // 🎯 URL FIX: Correct URL construction
     const apiURL = `${TELEGRAM_API_BASE_URL}${token}/sendMessage`;
     const payload = { 
         chat_id: chatId, 
@@ -59,7 +59,7 @@ async function sendRawTelegramMessage(token, chatId, message, replyToId = null, 
  * Edits a message in Telegram (Used for live setup and final status update).
  */
 async function editTelegramMessage(token, chatId, messageId, message, keyboard = null) {
-    // 🎯 FIX: Correct URL construction
+    // 🎯 URL FIX: Correct URL construction
     const apiURL = `${TELEGRAM_API_BASE_URL}${token}/editMessageText`;
     const payload = {
         chat_id: chatId,
@@ -104,7 +104,7 @@ async function editTelegramMessage(token, chatId, messageId, message, keyboard =
 }
 
 async function deleteTelegramMessage(token, chatId, messageId) {
-    // 🎯 FIX: Correct URL construction
+    // 🎯 URL FIX: Correct URL construction
     const apiURL = `${TELEGRAM_API_BASE_URL}${token}/deleteMessage`;
     const payload = {
         chat_id: chatId,
@@ -128,7 +128,7 @@ async function deleteTelegramMessage(token, chatId, messageId) {
 }
 
 async function fetchFileAsBase64(token, filePath) {
-    // 🎯 FIX: The file URL must be constructed separately
+    // 🎯 URL FIX: The file URL must be constructed separately
     const fileUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
     const response = await fetch(fileUrl);
     if (!response.ok) {
@@ -144,8 +144,11 @@ async function fetchFileAsBase64(token, filePath) {
     return btoa(binary);
 }
 
+/**
+ * Retrieves the file path from Telegram API
+ */
 async function getTelegramFilePath(token, fileId) {
-    // 🎯 FIX: Correct URL construction
+    // 🎯 URL FIX: Correct URL construction
     const url = `${TELEGRAM_API_BASE_URL}${token}/getFile?file_id=${fileId}`;
     const response = await fetch(url);
     const data = await response.json();
@@ -162,7 +165,7 @@ async function getTelegramFilePath(token, fileId) {
 }
 
 async function sendBotOwnerInviteLink(token, chatId, ownerUserId) {
-    // 🎯 FIX: Correct URL construction
+    // 🎯 URL FIX: Correct URL construction
     const createInviteUrl = `${TELEGRAM_API_BASE_URL}${token}/createChatInviteLink`;
     const payload = { chat_id: chatId };
     try {
@@ -199,7 +202,7 @@ async function sendBotOwnerInviteLink(token, chatId, ownerUserId) {
  * Retrieves the Creator (Group Owner) User ID for a given chat.
  */
 async function getGroupCreatorId(token, chatId) {
-    // 🎯 FIX: Correct URL construction
+    // 🎯 URL FIX: Correct URL construction
     const apiURL = `${TELEGRAM_API_BASE_URL}${token}/getChatAdministrators?chat_id=${chatId}`;
     try {
         const response = await fetch(apiURL);
@@ -241,6 +244,11 @@ async function validateGeminiKey(apiKey) {
             const errorData = await response.json();
             const errorMessage = errorData.error?.message || `API Error: ${response.status}`;
             
+            // Handle the 503 Overload Error (This is not a key validation failure)
+            if (response.status === 503) {
+                 return { isValid: true, error: "Key වලංගුයි, නමුත් Gemini Server එක අධිභාරය වී ඇත (503)." };
+            }
+
             if (errorMessage.includes("API key not valid") || errorMessage.includes("API key is not valid")) {
                  return { isValid: false, error: "API Key එක වලංගු නැත. (Gemini API ප්‍රතික්ෂේප කළා)" };
             }
@@ -252,13 +260,19 @@ async function validateGeminiKey(apiKey) {
     }
 }
 
+/**
+ * 🎯 OCR FIX: Uses Gemini to extract all text and checks for keywords.
+ */
 async function checkImageForProfitCard(geminiApiKey, base64Image, mimeType = 'image/jpeg') {
     if (!geminiApiKey) {
         console.error("Gemini AI: API Key is missing for this chat.");
         return false; 
     }
     const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_VISION_MODEL}:generateContent?key=${geminiApiKey}`;
-    const prompt = `You are a strict Telegram moderator bot. Analyze the image. Is this an official trade or profit/loss sharing card? Specifically, look for clear crypto trading elements like "Binance Futures", "USDT Perpetual", "+[number] USDT", "Entry Price", "Last Price", and a "Referral Code" or QR code. The presence of a white-on-black, clean interface, and clear trading data strongly suggests YES. Answer STRICTLY with only ONE word: 'YES' or 'NO'. Do not add any explanation or punctuation.`;
+    
+    // NEW OCR PROMPT: Ask the model to extract all text visible.
+    const prompt = `You are an OCR expert. Extract ALL text visible in this image and return only the text content, separating lines with a newline character. Do not add any introductory or concluding sentences.`;
+    
     const payload = {
         contents: [{ 
             parts: [
@@ -267,22 +281,38 @@ async function checkImageForProfitCard(geminiApiKey, base64Image, mimeType = 'im
             ] 
         }],
     };
+    
     try {
         const response = await fetch(GEMINI_API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
+        
         if (!response.ok) {
             const errorText = await response.text();
-            console.error(`Gemini API Error: Status ${response.status} - ${errorText}`);
+            console.error(`Gemini OCR API Error: Status ${response.status} - ${errorText}`);
             return false;
         }
+        
         const result = await response.json();
-        const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text?.toUpperCase().trim();
-        return textResponse === 'YES';
+        const extractedText = result.candidates?.[0]?.content?.parts?.[0]?.text?.toUpperCase().trim() || '';
+
+        // --- CHECK FOR KEYWORDS (Case-insensitive) ---
+        const keywords = ["USDT", "BINANCE", "ENTRY PRICE", "FUTURE", "REFERRAL CODE", "LAST PRICE", "PERPETUAL", "PROFIT"];
+        
+        const isProfitCard = keywords.some(keyword => extractedText.includes(keyword));
+
+        if (isProfitCard) {
+            console.log("OCR Result (Profit Card Detected):", extractedText);
+        } else {
+            console.log("OCR Result (No Profit Card Keywords):", extractedText.substring(0, 100));
+        }
+
+        return isProfitCard;
+
     } catch (error) {
-        console.error("Gemini Vision failed:", error.message);
+        console.error("Gemini OCR failed:", error.message);
         return false;
     }
 }
@@ -363,7 +393,7 @@ async function handleAccessCommand(env, message, chatId, messageId, userId) {
 
     } catch (error) {
         console.error("Error during live setup sequence:", error);
-        // 🎯 FIX: Delete the temporary ID if sequence fails
+        // Delete the temporary ID if sequence fails
         await env.BOT_CONFIG.delete(`${GROUP_MSG_ID_PREFIX}_${chatId}`);
         await editTelegramMessage(TOKEN, chatId, sentMessageId, 
             `🛑 <b>Error!</b>\n\nVerification process එක අතරතුර දෝෂයක් ඇතිවිය. කරුණාකර නැවත උත්සාහ කරන්න.`
@@ -442,8 +472,7 @@ async function handleSetupTypeSelection(env, data, userId, userName, groupMessag
         return;
     }
     
-    // 🎯 FIX: Save the Group Message ID here before editing the group message
-    // We already saved it in handleAccessCommand, but let's ensure it's here too for safety/clarity.
+    // Save the Group Message ID here
     await env.BOT_CONFIG.put(`${GROUP_MSG_ID_PREFIX}_${targetChatId}`, groupMessageId.toString(), { expirationTtl: 3600 });
     
     let destinationChatId; 
@@ -561,13 +590,13 @@ async function handleOwnerConfirmation(env, data, ownerId, ownerName, ownerMessa
         `<b>Group ID: ${targetChatId}</b> සඳහා Gemini Key එක සාර්ථකව සුරැකින ලදී.`
     , 'remove'); // 'remove' will remove the inline keyboard
 
-    // 5. Retrieve the Group Message ID (🎯 FIX: Use the new dedicated key)
+    // 5. Retrieve the Group Message ID
     const setupMessageId = await env.BOT_CONFIG.get(`${GROUP_MSG_ID_PREFIX}_${targetChatId}`);
     
     // 6. Edit the original group message to 'Setup Complete' (Updated success message)
     if (setupMessageId) {
         await env.BOT_CONFIG.delete(`${GROUP_MSG_ID_PREFIX}_${targetChatId}`);
-        // 💡 CHANGE: Group success message update
+        // Group success message update
         await editTelegramMessage(TOKEN, targetChatId, setupMessageId, 
             `🎉 <b>Setup සම්පූර්ණයි!</b>\n\n` +
             `<b>Successfully access this group ✅</b>\n` +
@@ -654,7 +683,7 @@ async function handlePrivateMessage(env, message, chatId, messageId, userId) {
                 `කරුණාකර සම්පූර්ණ සහ නිවැරදි Gemini API Key එක නැවතත් යවන්න.\n\n` + 
                 `<b>Setup Type:</b> ${setupType === 'OWNER' ? '👑 BOT OWNER' : '🛠️ GROUP CREATOR'}`;
             
-            // 🎯 EDIT: Edit the original prompt message
+            // EDIT: Edit the original prompt message
             await editTelegramMessage(TOKEN, chatId, promptMessageId, invalidKeyMessage);
             // Delete the message the user sent with the invalid key
             await deleteTelegramMessage(TOKEN, chatId, messageId);
@@ -662,22 +691,32 @@ async function handlePrivateMessage(env, message, chatId, messageId, userId) {
         }
         
         // 1. Key Validation - EDIT 1: Key Checking Status
-        // 🎯 EDIT: Edit the message for checking status
+        // EDIT: Edit the message for checking status
         await editTelegramMessage(TOKEN, chatId, promptMessageId, "⏳ <b>Key එක පරීක්ෂා කරමින්...</b>");
         await deleteTelegramMessage(TOKEN, chatId, messageId); // Delete the message with the key
         
         const validationResult = await validateGeminiKey(newKey);
         
-        if (!validationResult.isValid && validationResult.error.includes("API Key එක වලංගු නැත")) {
+        if (!validationResult.isValid) {
             // EDIT: Edit the message for validation failure
             const validationFailedMessage = 
                 `🛑 <b>Key එක අසාර්ථකයි!</b>\n\n` + 
                 `${validationResult.error}\n` + 
                 `කරුණාකර නිවැරදි Key එක නැවතත් යවන්න.\n\n` +
                 `<b>Setup Type:</b> ${setupType === 'OWNER' ? '👑 BOT OWNER' : '🛠️ GROUP CREATOR'}`;
-            // 🎯 EDIT: Edit the original prompt message
+            // EDIT: Edit the original prompt message
             await editTelegramMessage(TOKEN, chatId, promptMessageId, validationFailedMessage);
             return;
+        }
+
+        // Handle the 503 overload case
+        if (validationResult.error && validationResult.error.includes("503")) {
+            const overloadMessage = 
+                `⚠️ <b>Key එක වලංගුයි!</b>\n\n` + 
+                `${validationResult.error}\n` + 
+                `කරුණාකර Bot Ownerට දැනුම් දී අනුමැතිය ලබාගන්න.`
+            await editTelegramMessage(TOKEN, chatId, promptMessageId, overloadMessage);
+            // Continue to owner confirmation
         }
         
         // 2. Clear the temporary setup state (but save the prompt ID for final message edit)
@@ -721,7 +760,7 @@ async function handlePrivateMessage(env, message, chatId, messageId, userId) {
             `✅ <b>Key එක වලංගුයි!</b>\n\n` +
             `Key එකේ විස්තර Bot Ownerගේ Private Chat වෙත අවසාන අනුමැතිය සඳහා යවන ලදී.\n` +
             `<i>Bot Owner අනුමත කරන තෙක් රැඳී සිටින්න.</i>`;
-        // 🎯 EDIT: Edit the original prompt message
+        // EDIT: Edit the original prompt message
         await editTelegramMessage(TOKEN, chatId, promptMessageId, finalValidMessage);
 
         return;
@@ -800,6 +839,7 @@ async function handleTelegramUpdate(update, env) {
         return; 
     }
 
+    // 🎯 FIX: Return early if no message (prevents unexpected stack errors)
     if (!update.message) return; 
 
     const message = update.message;
@@ -850,8 +890,11 @@ async function handleTelegramUpdate(update, env) {
         const base64Image = await fetchFileAsBase64(TOKEN, filePath); 
         const isProfitCard = await checkImageForProfitCard(geminiApiKey, base64Image, mimeType);
 
-        if (!isProfitCard) {
-            await deleteTelegramMessage(TOKEN, chatId, messageId);
+        if (isProfitCard) {
+             console.log(`Message ${messageId}: Identified as a PROFIT CARD. KEEPING IT.`);
+        } else {
+             console.log(`Message ${messageId}: NOT a Profit Card. DELETING IT.`);
+             await deleteTelegramMessage(TOKEN, chatId, messageId);
         }
 
     } catch (e) {
