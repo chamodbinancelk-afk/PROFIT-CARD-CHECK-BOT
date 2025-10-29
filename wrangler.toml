@@ -1,4 +1,4 @@
-name = "cfnewseconomic2000"
+name = "profitcradbot"
 main = "index.mjs" 
 compatibility_date = "2025-10-12"
 
