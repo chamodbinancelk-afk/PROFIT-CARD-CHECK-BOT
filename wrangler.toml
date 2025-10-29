@@ -3,6 +3,3 @@ main = "index.mjs"
 compatibility_date = "2025-10-12"
 
 compatibility_flags = ["nodejs_compat"]
-
-[triggers]
-crons = ["*/1 * * * *"]
