@@ -13,7 +13,6 @@ const HARDCODED_CONFIG = {
     // 🛑 REPLACE THIS with your TARGET GROUP/CHANNEL ID 🛑
     MAIN_CHAT_ID: '-1003112433339',                 
     // 🛑 REPLACE THIS with your ACTUAL, VALID GEMINI API KEY 🛑
-    // EXAMPLE: 'AIzaSyB-gR6yO0oE2xQ4zC8vN1mM3lK5jH7iF9eD'
     GEMINI_API_KEY: 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU', 
 };
 
@@ -109,7 +108,8 @@ async function getTelegramFilePath(fileId) {
 }
 
 /**
- * Downloads the file and converts it to a Base64 string.
+ * Downloads the file and converts it to a Base64 string using a safer method.
+ * FIX for RangeError: Maximum call stack size exceeded.
  */
 async function fetchFileAsBase64(filePath) {
     const TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
@@ -121,8 +121,19 @@ async function fetchFileAsBase64(filePath) {
     }
 
     const arrayBuffer = await response.arrayBuffer();
-    // Convert ArrayBuffer to Base64
-    return btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+    
+    // 💡 FIX: Safely convert ArrayBuffer to Base64 string for Workers
+    // Use an efficient mechanism to prevent stack overflow on large files
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = '';
+    const len = bytes.byteLength;
+
+    // Process in chunks to prevent 'Maximum call stack size exceeded'
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    
+    return btoa(binary);
 }
 
 
@@ -137,19 +148,19 @@ async function fetchFileAsBase64(filePath) {
 async function checkImageForProfitCard(base64Image, mimeType = 'image/jpeg') {
     const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
 
-    // 🛑 Key check logic is simplified to avoid misinterpreting a placeholder
-    if (!GEMINI_API_KEY) {
-        console.error("Gemini AI: API Key is completely empty! Check HARDCODED_CONFIG.");
+    // Check for missing or placeholder key
+    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU') {
+        console.error("Gemini AI: API Key is missing or placeholder. CHECK HARDCODED_CONFIG!");
         return false; 
     }
     
-    // Log key status (DO NOT SHARE THIS LOG PUBLICLY)
+    // Log key status for debugging (DO NOT SHARE THIS LOG PUBLICLY)
     console.log(`Key Status: Loaded (Starts with ${GEMINI_API_KEY.substring(0, 5)}...)`);
 
 
     const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_VISION_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
     
-    // Strengthened Prompt
+    // Strengthened Prompt for better detection
     const prompt = `You are a strict Telegram moderator bot. Analyze the image. Is this an official trade or profit/loss sharing card? Specifically, look for clear crypto trading elements like "Binance Futures", "USDT Perpetual", "+[number] USDT", "Entry Price", "Last Price", and a "Referral Code" or QR code. The presence of a white-on-black, clean interface, and clear trading data strongly suggests YES. Answer STRICTLY with only ONE word: 'YES' or 'NO'. Do not add any explanation or punctuation.`;
 
     const payload = {
@@ -176,7 +187,7 @@ async function checkImageForProfitCard(base64Image, mimeType = 'image/jpeg') {
         if (!response.ok) {
             const errorText = await response.text();
             console.error(`Gemini API Error: Status ${response.status} - ${errorText}`);
-            // If API call fails (e.g., key invalid, limits reached), we assume it's NOT a valid card to prevent accidental keep.
+            // If API call fails, assume it's NOT a valid card to prevent accidental keep.
             return false;
         }
 
@@ -239,17 +250,17 @@ async function handleTelegramUpdate(update) {
 
     // --- Core Profit Card Analysis ---
     try {
-        // 3. Get the file path (uses hardcoded token internally)
+        // 3. Get the file path 
         const filePath = await getTelegramFilePath(fileId);
         if (!filePath) {
             console.error(`Could not get file path for ID: ${fileId}.`);
             return; 
         }
         
-        // 4. Download and convert to Base64 (uses hardcoded token internally)
+        // 4. Download and convert to Base64 (using the fixed, safe function)
         const base64Image = await fetchFileAsBase64(filePath);
 
-        // 5. Ask Gemini Vision (uses hardcoded key internally)
+        // 5. Ask Gemini Vision 
         const isProfitCard = await checkImageForProfitCard(base64Image, mimeType);
 
         // 6. Action based on AI result
@@ -257,7 +268,7 @@ async function handleTelegramUpdate(update) {
             console.log(`✅ Message ${messageId}: Identified as a PROFIT CARD. KEEPING IT.`);
         } else {
             console.log(`❌ Message ${messageId}: NOT a Profit Card. DELETING IT.`);
-            // 7. Delete the message (uses hardcoded token internally)
+            // 7. Delete the message 
             await deleteTelegramMessage(chatId, messageId);
         }
 
