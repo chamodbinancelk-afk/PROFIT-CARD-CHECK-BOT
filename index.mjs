@@ -12,15 +12,13 @@ const MAX_FILE_SIZE_MB = 20;
 const GEMINI_VISION_MODEL = 'gemini-2.5-flash';
 const KEY_KV_PREFIX = ':GEMINI_API_KEY'; 
 const SETUP_STATE_KV_PREFIX = ':SETUP_STATE'; 
-const PENDING_KEY_KV_PREFIX = 'PENDING_KEY'; // New Key for Admin Submissions
+const PENDING_KEY_KV_PREFIX = 'PENDING_KEY'; 
 
 const TELEGRAM_API_BASE_URL = 'https://api.telegram.org/bot';
 
 // =================================================================
 // --- UTILITY FUNCTIONS ---
 // =================================================================
-
-// ... (sendRawTelegramMessage, editTelegramMessage, deleteTelegramMessage, fetchFileAsBase64, getTelegramFilePath, sendBotOwnerInviteLink - all remain the same as the previous response) ...
 
 /**
  * Sends a message to Telegram using HTML Parse Mode.
@@ -187,7 +185,6 @@ async function sendBotOwnerInviteLink(token, chatId, ownerUserId) {
     }
 }
 
-// ... (checkImageForProfitCard remains the same) ...
 async function checkImageForProfitCard(geminiApiKey, base64Image, mimeType = 'image/jpeg') {
     if (!geminiApiKey) {
         console.error("Gemini AI: API Key is missing for this chat.");
@@ -225,7 +222,7 @@ async function checkImageForProfitCard(geminiApiKey, base64Image, mimeType = 'im
 
 
 // =================================================================
-// --- TELEGRAM COMMAND & CALLBACK HANDLERS (UPDATED) ---
+// --- TELEGRAM COMMAND & CALLBACK HANDLERS ---
 // =================================================================
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -237,17 +234,17 @@ async function handleAccessCommand(env, message, chatId, messageId, userId) {
     const TOKEN = HARDCODED_TELEGRAM_TOKEN;
     const BOT_OWNER_ID = parseInt(env.BOT_OWNER_USER_ID); 
     
-    if (userId !== BOT_OWNER_ID && !(message.chat.all_members_are_administrators)) { // Basic check for admin outside of owner
-        // We'll let admins proceed to the selection, but only if they are admins (Telegram does not provide full admin list without extra API calls)
-        // For now, we allow any user to start the process, and handle the admin check later.
-    }
+    // We allow any user to start the verification, and handle the admin check later
+    // if (userId !== BOT_OWNER_ID && !(message.chat.all_members_are_administrators)) { ... }
     
     const initialMessage = `🛠️ <b>Setup Verification Process</b>\n\n1. Checking status... ⚙`;
+    
+    // Send the message as a reply and get the sent message ID
     const sentMessageId = await sendRawTelegramMessage(TOKEN, chatId, initialMessage, messageId);
     if (!sentMessageId) return;
 
     try {
-        const ownerName = userId === BOT_OWNER_ID ? message.from.first_name : 'Unknown User';
+        const ownerName = message.from.first_name || 'Initiator'; // Use initiator's name
         
         // --- STAGE 1: Get Group Title ---
         await delay(1000);
@@ -276,16 +273,20 @@ async function handleAccessCommand(env, message, chatId, messageId, userId) {
             `3. <b>Initiated By:</b> ${ownerName} (${userId}) ✅\n4. Successfully Verified All Data ✅`
         );
         
-        // --- STAGE 4: Final Setup Prompt with New Button ---
+        // --- STAGE 4: Final Setup Prompt with New Button (No extra text) ---
         await delay(1500);
 
         // Save the Sent Message ID temporarily
         await env.BOT_CONFIG.put(`MSG_ID_${chatId}_${userId}`, sentMessageId.toString(), { expirationTtl: 3600 });
         
-        const setupMessage = 
-            `🔑 <b>Gemini API Key Setup</b>\n\n` +
-            `Verification සාර්ථකයි. දැන් Bot සේවාව සක්‍රීය කිරීමට පහත Button එක භාවිතා කරන්න.\n\n` +
-            `<b>සැකසීම ආරම්භ කළ යුත්තේ Bot Owner හෝ Group Admin කෙනෙක් පමණි.</b>`;
+        // 🛑 CHANGE: Only verification details and the button remain
+        const finalVerificationMessage = 
+            `🛠️ <b>Setup Verification Process</b>\n\n` +
+            `1. <b>Group Name:</b> ${groupTitle} ✅\n` +
+            `2. <b>Group ID:</b> <code>${chatId}</code> ✅\n` +
+            `3. <b>Initiated By:</b> ${ownerName} (${userId}) ✅\n` +
+            `4. <b>Successfully Verified All Data ✅</b>\n\n` +
+            `<i>Bot සේවාව සක්‍රීය කිරීමට පහත Button එක භාවිතා කරන්න.</i>`; // Small instruction text
 
         const keyboard = {
             inline_keyboard: [
@@ -296,7 +297,7 @@ async function handleAccessCommand(env, message, chatId, messageId, userId) {
             ]
         };
         
-        await editTelegramMessage(TOKEN, chatId, sentMessageId, setupMessage, keyboard);
+        await editTelegramMessage(TOKEN, chatId, sentMessageId, finalVerificationMessage, keyboard);
 
 
     } catch (error) {
@@ -327,7 +328,7 @@ async function handleCallbackQuery(env, callbackQuery) {
         const targetChatId = parts[2];
         const initiatorId = parseInt(parts[3]);
 
-        // Check if the initiator or the owner/a verified admin is clicking
+        // Only the initiator or the bot owner can proceed to the selection
         if (userId !== initiatorId && userId !== BOT_OWNER_ID) {
             await sendRawTelegramMessage(TOKEN, userId, "🛑 <b>අවසර නැත.</b> මෙම Setup එක ආරම්භ කිරීමට Group Admin හෝ Bot Owner විය යුතුය.");
             return;
@@ -335,7 +336,7 @@ async function handleCallbackQuery(env, callbackQuery) {
 
         const selectionMessage = 
             `👥 <b>Setup Type තෝරන්න</b>\n\n` +
-            `${userName}, ඔබ Setup කරන්නේ <b>Bot Owner</b> ලෙසද, නැතිනම් <b>Admin</b> කෙනෙක් ලෙසද?`;
+            `${userName}, ඔබ Setup කරන්නේ <b>Bot Owner</b> ලෙසද, නැතිනම් <b>Group Admin</b> කෙනෙක් ලෙසද?`;
 
         const keyboard = {
             inline_keyboard: [
@@ -363,7 +364,7 @@ async function handleCallbackQuery(env, callbackQuery) {
 }
 
 /**
- * 🛑 NEW FUNCTION: Handles Owner/Admin selection and sends private key request.
+ * 🛑 UPDATED: Handles Owner/Admin selection and sends private key request.
  */
 async function handleSetupTypeSelection(env, data, userId, userName, groupMessageId) {
     const TOKEN = HARDCODED_TELEGRAM_TOKEN;
@@ -374,8 +375,6 @@ async function handleSetupTypeSelection(env, data, userId, userName, groupMessag
     const selectedUserId = parseInt(parts[3]);
     const setupType = parts[4];
 
-    // Final check on user selection logic (This is complex to fully check without getChatMember API call)
-    // For simplicity, we proceed based on trust but rely on BOT_OWNER_ID for final authority.
     if (userId !== selectedUserId && userId !== BOT_OWNER_ID) {
         await sendRawTelegramMessage(TOKEN, userId, "🛑 <b>අවසර නැත.</b> මෙම Setup එක ආරම්භ කළ පුද්ගලයා හෝ Ownerට පමණක් ඉදිරියට යා හැක.");
         return;
@@ -384,7 +383,7 @@ async function handleSetupTypeSelection(env, data, userId, userName, groupMessag
     // 1. Edit the Group Message (removes buttons)
     await editTelegramMessage(TOKEN, targetChatId, groupMessageId,
         `💬 <b>API Key Setup</b>\n\n` +
-        `✅ <b>${userName}</b> විසින් Setup එක ආරම්භ කළේය (${setupType} ලෙස).\n` +
+        `✅ <b>${userName}</b> විසින් Setup එක ආරම්භ කළේය (${setupType === 'OWNER' ? 'Owner' : 'Admin'} ලෙස).\n` +
         `🔑 <b>Set-up එක පුද්ගලික chat එකකට ගෙන යන ලදි.</b>\n` +
         `Setup කරන පුද්ගලයාට Private Chat එක පරීක්ෂා කිරීමට දන්වන්න.`
     , 'remove'); 
@@ -393,8 +392,8 @@ async function handleSetupTypeSelection(env, data, userId, userName, groupMessag
     await sendRawTelegramMessage(TOKEN, userId, 
         `✅ <b>Group ID: ${targetChatId}</b>\n\n` +
         `කරුණාකර දැන් ඔබගේ සම්පූර්ණ <b>Gemini API Key</b> එක මෙහි යවන්න.\n\n` +
-        `<b>Setup Type:</b> ${setupType === 'OWNER' ? '👑 OWNER (Auto Approve)' : '🛠️ ADMIN (Owner Approval අවශ්‍යයි)'}\n` +
-        `Key එක යැවූ පසු, එය ස්වයංක්‍රීයව ${setupType === 'OWNER' ? 'සුරැකේ' : 'Ownerට යවනු ඇත'}.`
+        `<b>Setup Type:</b> ${setupType === 'OWNER' ? '👑 OWNER' : '🛠️ ADMIN'}\n\n` +
+        `🔑 <b>Key එක යැවූ පසු,</b> එය ${setupType === 'OWNER' ? 'ස්වයංක්‍රීයව සුරැකෙනු ඇත.' : 'Bot Owner වෙත අනුමත කිරීම සඳහා යවනු ඇත.'}` // 🛑 CHANGE: Improved Clarity for Admin
     );
     
     // 3. Update the state in KV
@@ -402,7 +401,7 @@ async function handleSetupTypeSelection(env, data, userId, userName, groupMessag
 }
 
 /**
- * 🛑 NEW FUNCTION: Handles Owner approval of a key submitted by an Admin.
+ * Handles Owner approval of a key submitted by an Admin.
  */
 async function handleOwnerApproval(env, data, ownerId, ownerName) {
     const TOKEN = HARDCODED_TELEGRAM_TOKEN;
@@ -444,24 +443,24 @@ async function handleOwnerApproval(env, data, ownerId, ownerName) {
 }
 
 /**
- * Handles private message logic for Key Submission (Admin vs Owner).
+ * 🛑 UPDATED: Handles private message logic for Key Submission (Admin vs Owner).
  */
 async function handlePrivateMessage(env, message, chatId, messageId, userId) {
     const TOKEN = HARDCODED_TELEGRAM_TOKEN;
     const text = message.text || '';
     const BOT_OWNER_ID = parseInt(env.BOT_OWNER_USER_ID);
-    const userName = message.from.first_name || 'Admin';
     
     // 1. Check if the user is currently in a setup process
     const list = await env.BOT_CONFIG.list(); 
     let targetChatId = null;
     let setupType = null;
+    let initiatorId = null;
 
     for (const key of list.keys) {
         if (key.name.endsWith(SETUP_STATE_KV_PREFIX)) {
             const state = await env.BOT_CONFIG.get(key.name);
             if (state && state.startsWith(`${userId}:`)) {
-                [userId, setupType] = state.split(':');
+                [initiatorId, setupType] = state.split(':');
                 targetChatId = key.name.replace(SETUP_STATE_KV_PREFIX, ''); 
                 break;
             }
@@ -488,7 +487,6 @@ async function handlePrivateMessage(env, message, chatId, messageId, userId) {
                 await env.BOT_CONFIG.delete(`MSG_ID_${targetChatId}_${userId}`);
             }
 
-            // Send success message to Private Chat
             await sendRawTelegramMessage(TOKEN, chatId, 
                 `✅ <b>Key එක සුරැකුවා!</b>\n\n<b>Group ID: ${targetChatId}</b> සඳහා ඔබගේ Key එක සාර්ථකව සුරැකින ලදී.`
             );
@@ -515,16 +513,23 @@ async function handlePrivateMessage(env, message, chatId, messageId, userId) {
             );
             
             // Send Approval Request to Owner's Private Chat
+            const adminUserInfo = message.from;
+            const adminFirstName = adminUserInfo.first_name || 'Admin';
+            const adminUsername = adminUserInfo.username ? `@${adminUserInfo.username}` : 'No Username';
+            
             const approvalMessage = 
                 `🔔 <b>අනුමැතිය අවශ්‍යයි!</b>\n\n` +
-                `<b>Group ID: ${targetChatId}</b> (Name: ${await env.BOT_CONFIG.get(`MSG_ID_${targetChatId}_${userId}`) ? 'Group in Setup' : 'Unknown'}) Group එකේ Admin කෙනෙක් (${userName} - ${userId}) විසින් Gemini API Key එකක් යවා ඇත. එය අනුමත කරන්නද?` +
-                `\n\n<b>Group Message ID:</b> ${await env.BOT_CONFIG.get(`MSG_ID_${targetChatId}_${userId}`) || 'N/A'}`;
+                `<b>Group ID: ${targetChatId}</b> Group එකේ Admin කෙනෙක් විසින් Key එකක් යවා ඇත. එය අනුමත කරන්නද?\n\n` +
+                `<b>Admin Details:</b>\n` +
+                `👤 Name: ${adminFirstName}\n` +
+                `🔗 Username: ${adminUsername}\n` +
+                `🆔 User ID: <code>${userId}</code>`;
                 
             const keyboard = {
                 inline_keyboard: [
                     [{ 
                         text: "✅ Approve Key", 
-                        callback_data: `approve_key_${targetChatId}_${newKey}_${userId}` // Embed data for confirmation
+                        callback_data: `approve_key_${targetChatId}_${newKey}_${userId}`
                     }]
                 ]
             };
