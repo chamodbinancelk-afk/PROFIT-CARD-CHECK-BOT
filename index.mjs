@@ -13,6 +13,7 @@ const HARDCODED_CONFIG = {
     // 🛑 REPLACE THIS with your TARGET GROUP/CHANNEL ID 🛑
     MAIN_CHAT_ID: '-1003112433339',                 
     // 🛑 REPLACE THIS with your ACTUAL, VALID GEMINI API KEY 🛑
+    // EXAMPLE: 'AIzaSyB-gR6yO0oE2xQ4zC8vN1mM3lK5jH7iF9eD'
     GEMINI_API_KEY: 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU', 
 };
 
@@ -136,11 +137,15 @@ async function fetchFileAsBase64(filePath) {
 async function checkImageForProfitCard(base64Image, mimeType = 'image/jpeg') {
     const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
 
-    // Check for missing or placeholder key
-    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU') {
-        console.error("Gemini AI: API Key is missing or placeholder. CHECK HARDCODED_CONFIG!");
+    // 🛑 Key check logic is simplified to avoid misinterpreting a placeholder
+    if (!GEMINI_API_KEY) {
+        console.error("Gemini AI: API Key is completely empty! Check HARDCODED_CONFIG.");
         return false; 
     }
+    
+    // Log key status (DO NOT SHARE THIS LOG PUBLICLY)
+    console.log(`Key Status: Loaded (Starts with ${GEMINI_API_KEY.substring(0, 5)}...)`);
+
 
     const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_VISION_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
     
@@ -170,8 +175,8 @@ async function checkImageForProfitCard(base64Image, mimeType = 'image/jpeg') {
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.error(`Gemini API Error: ${response.status} - ${errorText}`);
-            // AI call fails, assume it's NOT a card to prevent accidental deletion of valid content.
+            console.error(`Gemini API Error: Status ${response.status} - ${errorText}`);
+            // If API call fails (e.g., key invalid, limits reached), we assume it's NOT a valid card to prevent accidental keep.
             return false;
         }
 
