@@ -9,7 +9,7 @@ import { load } from 'cheerio';
 const HARDCODED_CONFIG = {
     // 🛑 ඔබේ සත්‍ය දත්ත මගින් ප්‍රතිස්ථාපනය කරන්න
     TELEGRAM_TOKEN: '8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8', // ⬅️ Replace with your BOT TOKEN
-    MAIN_CHAT_ID: '-1003111341307',                 // ⬅️ Replace with your TARGET GROUP/CHANNEL ID
+    MAIN_CHAT_ID: '-1003112433339',                 // ⬅️ Replace with your TARGET GROUP/CHANNEL ID
     GEMINI_API_KEY: 'AIzaSyAdoKzVMv1VZK885fuID9CEpdc37SD7cgw', // ⬅️ Replace with your GEMINI KEY
 };
 
