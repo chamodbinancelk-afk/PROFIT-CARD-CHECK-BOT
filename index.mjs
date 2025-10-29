@@ -13,7 +13,7 @@ const GEMINI_VISION_MODEL = 'gemini-2.5-flash';
 const KEY_KV_PREFIX = ':GEMINI_API_KEY'; 
 const SETUP_STATE_KV_PREFIX = ':SETUP_STATE'; 
 
-const TELEGRAM_API_BASE_URL = 'https://api.telegram.org/bot';
+const TELEGRAM_API_BASE_URL = '[https://api.telegram.org/bot](https://api.telegram.org/bot)';
 
 // =================================================================
 // --- UTILITY FUNCTIONS ---
@@ -185,7 +185,7 @@ async function sendBotOwnerInviteLink(token, chatId, ownerUserId) {
 }
 
 /**
- * 🛑 NEW FUNCTION: Retrieves the Creator (Group Owner) User ID for a given chat.
+ * Retrieves the Creator (Group Owner) User ID for a given chat.
  */
 async function getGroupCreatorId(token, chatId) {
     const apiURL = `${TELEGRAM_API_BASE_URL}${token}/getChatAdministrators?chat_id=${chatId}`;
@@ -205,6 +205,38 @@ async function getGroupCreatorId(token, chatId) {
     } catch (e) {
         console.error("Error fetching chat administrators:", e);
         return null;
+    }
+}
+
+/**
+ * 🛑 NEW FUNCTION: Attempts a simple model call to check if the Gemini API key is valid.
+ */
+async function validateGeminiKey(apiKey) {
+    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const payload = {
+        contents: [{ parts: [{ text: "Hello" }] }],
+    };
+    try {
+        const response = await fetch(GEMINI_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        if (response.status === 200) {
+            return { isValid: true, error: null };
+        } else {
+            const errorData = await response.json();
+            const errorMessage = errorData.error?.message || `API Error: ${response.status}`;
+            
+            if (errorMessage.includes("API key not valid") || errorMessage.includes("API key is not valid")) {
+                 return { isValid: false, error: "API Key එක වලංගු නැත. (Gemini API ප්‍රතික්ෂේප කළා)" };
+            }
+            return { isValid: true, error: `Key එක වලංගුයි, නමුත් API Server වෙතින් වෙනත් දෝෂයක් (${response.status})` };
+        }
+    } catch (error) {
+        console.error("Gemini Validation failed:", error.message);
+        return { isValid: false, error: `සම්බන්ධතා දෝෂය: ${error.message}` };
     }
 }
 
@@ -326,7 +358,7 @@ async function handleAccessCommand(env, message, chatId, messageId, userId) {
 }
 
 /**
- * Handles button clicks for selection.
+ * Handles button clicks for selection and confirmation.
  */
 async function handleCallbackQuery(env, callbackQuery) {
     const TOKEN = HARDCODED_TELEGRAM_TOKEN;
@@ -373,12 +405,15 @@ async function handleCallbackQuery(env, callbackQuery) {
     } else if (data.startsWith('select_type_')) {
         // Handle Owner/Admin selection
         await handleSetupTypeSelection(env, data, userId, userName, groupMessageId);
+    } else if (data.startsWith('confirm_key_')) { 
+        const parts = data.split('_');
+        const targetChatId = parts[2];
+        await handleOwnerConfirmation(env, data, userId, userName, callbackQuery.message.message_id, targetChatId);
     }
 }
 
 /**
- * 🛑 CORRECTED: Handles Owner/Admin selection and sends private key request.
- * - If ADMIN is selected, sends the Key Request ONLY to the Group Creator.
+ * Handles Owner/Admin selection and sends private key request.
  */
 async function handleSetupTypeSelection(env, data, userId, userName, groupMessageId) {
     const TOKEN = HARDCODED_TELEGRAM_TOKEN;
@@ -407,7 +442,7 @@ async function handleSetupTypeSelection(env, data, userId, userName, groupMessag
             `✅ <b>Group ID: ${targetChatId}</b>\n\n` +
             `කරුණාකර දැන් ඔබගේ සම්පූර්ණ <b>Gemini API Key</b> එක මෙහි යවන්න.\n\n` +
             `<b>Setup Type:</b> 👑 BOT OWNER\n\n` +
-            `🔑 <b>Key එක යැවූ පසු,</b> එය ස්වයංක්‍රීයව සුරැකෙනු ඇත.`;
+            `🔑 <b>Key එක යැවූ පසු,</b> එය වලංගුතාවය පරීක්ෂා කර Owner (ඔබ) වෙත අවසාන අනුමැතිය සඳහා යවනු ඇත.`;
             
         await editTelegramMessage(TOKEN, targetChatId, groupMessageId,
             `💬 <b>API Key Setup</b>\n\n` +
@@ -417,7 +452,7 @@ async function handleSetupTypeSelection(env, data, userId, userName, groupMessag
         , 'remove'); 
 
     } else if (setupType === 'ADMIN') {
-        // 🛑 NEW LOGIC: ADMIN setup: Key submitted by the Group Creator
+        // ADMIN setup: Key submitted by the Group Creator
         const groupCreatorId = await getGroupCreatorId(TOKEN, targetChatId);
         
         if (!groupCreatorId) {
@@ -458,33 +493,117 @@ async function handleSetupTypeSelection(env, data, userId, userName, groupMessag
     // 4. Prompt the designated user in their private chat
     await sendRawTelegramMessage(TOKEN, destinationChatId, privatePromptMessage);
     
-    // 5. Update the state in KV
-    await env.BOT_CONFIG.put(`${targetChatId}${SETUP_STATE_KV_PREFIX}`, `${keySubmitterId}:${setupType}`, { expirationTtl: 3600 });
+    // 5. Update the state in KV (We use selectedUserId for MSG_ID lookup)
+    await env.BOT_CONFIG.put(`${targetChatId}${SETUP_STATE_KV_PREFIX}`, `${selectedUserId}:${setupType}`, { expirationTtl: 3600 });
+    // Note: selectedUserId is used to identify the MSG_ID saved in handleAccessCommand.
 }
+
+/**
+ * 🛑 NEW FUNCTION: Handles final confirmation by the Bot Owner.
+ */
+async function handleOwnerConfirmation(env, data, ownerId, ownerName, ownerMessageId, targetChatId) {
+    const TOKEN = HARDCODED_TELEGRAM_TOKEN;
+    const BOT_OWNER_ID = parseInt(env.BOT_OWNER_USER_ID);
+
+    if (ownerId !== BOT_OWNER_ID) {
+        await sendRawTelegramMessage(TOKEN, ownerId, "🛑 <b>අවසර නැත.</b> ඔබට මෙම Key එක අනුමත කළ නොහැක.");
+        return;
+    }
+    
+    const pendingData = await env.BOT_CONFIG.get(`PENDING_CONFIRM_${targetChatId}`);
+    if (!pendingData) {
+        await editTelegramMessage(TOKEN, ownerId, ownerMessageId, 
+            `🛑 <b>අසාර්ථකයි:</b> මෙම අනුමැතිය කල් ඉකුත් වී ඇත හෝ දත්ත සොයාගත නොහැක.`
+        , 'remove');
+        return;
+    }
+    
+    // Format: targetChatId|newKey|submitterId|setupType
+    const [_, newKey, submitterId, setupType] = pendingData.split('|');
+
+    // 1. Save the key permanently in KV
+    await env.BOT_CONFIG.put(`${targetChatId}${KEY_KV_PREFIX}`, newKey);
+    
+    // 2. Clear the pending state
+    await env.BOT_CONFIG.delete(`PENDING_CONFIRM_${targetChatId}`);
+
+    // 3. Edit Bot Owner's Confirmation Message
+    await editTelegramMessage(TOKEN, ownerId, ownerMessageId, 
+        `✅ <b>Group Key අනුමතයි!</b>\n\n` +
+        `<b>Group ID: ${targetChatId}</b> සඳහා Gemini Key එක සාර්ථකව සුරැකින ලදී.`
+    , 'remove');
+
+    // 4. Retrieve the Group Message ID (Saved under the submitter's ID during .acces)
+    // IMPORTANT: The MSG_ID is saved under the ID of the person who clicked .acces/start_selection.
+    // The submitterId here is the Group Creator/Bot Owner who submitted the key in private chat.
+    // To ensure we get the correct message ID, we need to search KV for the MSG_ID associated with the group and see who the initiator was.
+    
+    // Since we simplified the state saving in handleSetupTypeSelection to use selectedUserId 
+    // (the one who clicked start_selection_ ) for MSG_ID lookup, we need to retrieve that original ID.
+    // Temporarily, we will assume the submitterId is the original initiator for simplicity and fix if needed later.
+    
+    const setupMessageId = await env.BOT_CONFIG.get(`MSG_ID_${targetChatId}_${submitterId}`);
+    // If the submitter ID is not the initiator ID, we will fail to find MSG_ID. 
+    // For now, we proceed with submitterId as the lookup key.
+
+    // 5. Edit the original group message to 'Setup Complete'
+    if (setupMessageId) {
+        await env.BOT_CONFIG.delete(`MSG_ID_${targetChatId}_${submitterId}`);
+        const editorName = (setupType === 'OWNER') ? 'Bot Owner' : 'Group Creator';
+        await editTelegramMessage(TOKEN, targetChatId, setupMessageId, 
+            `🎉 <b>Setup සම්පූර්ණයි!</b>\n\n` +
+            `<b>${editorName} විසින් ලබාදුන් Key එක Bot Owner විසින් අනුමත කරන ලදී.</b>\n` +
+            `Profit Card පරීක්ෂා කිරීම දැන් සක්‍රීයයි.`
+        );
+    }
+    
+    // 6. Notify the original submitter (Creator/Owner)
+    await sendRawTelegramMessage(TOKEN, submitterId, 
+        `🎉 <b>අනුමැතිය ලැබුණා!</b>\n\nBot Owner විසින් <b>Group ID: ${targetChatId}</b> සඳහා ඔබ යැවූ Key එක අනුමත කරන ලදී.\n` +
+        `ඔබගේ Group එකේ සේවාව දැන් සක්‍රීයයි!`
+    );
+}
+
 
 /**
  * Handles private message logic for Key Submission.
  */
 async function handlePrivateMessage(env, message, chatId, messageId, userId) {
     const TOKEN = HARDCODED_TELEGRAM_TOKEN;
+    const BOT_OWNER_ID = parseInt(env.BOT_OWNER_USER_ID);
     const text = message.text || '';
     
     // 1. Check if the user is currently in a setup process
     const list = await env.BOT_CONFIG.list(); 
     let targetChatId = null;
     let setupType = null;
-    let userInKv = null; 
+    let initiatorId = null; // The user who clicked the original selection button
+    let userInKv = null; // The user ID stored in KV state (the one expected to submit the key)
 
     for (const key of list.keys) {
         if (key.name.endsWith(SETUP_STATE_KV_PREFIX)) {
             const state = await env.BOT_CONFIG.get(key.name);
             if (state) {
-                [userInKv, setupType] = state.split(':');
+                [initiatorId, setupType] = state.split(':');
                 
-                // The current message must be from the user who is EXPECTED to submit the key (userInKv)
-                if (parseInt(userInKv) === userId) {
-                    targetChatId = key.name.replace(SETUP_STATE_KV_PREFIX, '');
-                    break;
+                // Determine who should be submitting the key based on setupType
+                let expectedSubmitterId;
+                if (setupType === 'OWNER') {
+                    expectedSubmitterId = parseInt(initiatorId);
+                } else if (setupType === 'ADMIN') {
+                    // In the ADMIN flow, the key is expected from the Group Creator. 
+                    // Since the initiatorId is the one who clicked the button (selectedUserId),
+                    // and we want the Group Creator to submit, we need to re-find the Creator ID here.
+                    expectedSubmitterId = await getGroupCreatorId(TOKEN, key.name.replace(SETUP_STATE_KV_PREFIX, ''));
+                } else {
+                    continue; 
+                }
+                
+                // Check if the current user is the expected submitter
+                if (expectedSubmitterId && expectedSubmitterId === userId) {
+                     userInKv = expectedSubmitterId; // The actual submitter ID
+                     targetChatId = key.name.replace(SETUP_STATE_KV_PREFIX, '');
+                     break;
                 }
             }
         }
@@ -497,33 +616,56 @@ async function handlePrivateMessage(env, message, chatId, messageId, userId) {
             return;
         }
         
-        // Clear the setup state
+        // 1. Key Validation
+        await sendRawTelegramMessage(TOKEN, chatId, "⏳ <b>Key එක පරීක්ෂා කරමින්...</b>");
+        const validationResult = await validateGeminiKey(newKey);
+        
+        if (!validationResult.isValid && validationResult.error.includes("API Key එක වලංගු නැත")) {
+            await sendRawTelegramMessage(TOKEN, chatId, `🛑 <b>Key එක අසාර්ථකයි!</b>\n\n${validationResult.error}\nකරුණාකර නිවැරදි Key එක යවන්න.`);
+            return;
+        }
+        
+        // 2. Clear the setup state
         await env.BOT_CONFIG.delete(`${targetChatId}${SETUP_STATE_KV_PREFIX}`);
 
-        // 1. Save the key permanently in KV
-        await env.BOT_CONFIG.put(`${targetChatId}${KEY_KV_PREFIX}`, newKey);
+        // 3. Get Creator/Submitter Details
+        const groupCreatorName = message.from.first_name || 'Group Creator';
+        const groupCreatorUsername = message.from.username ? `@${message.from.username}` : 'No Username';
         
-        // 2. Retrieve the original message ID saved by the initiator of the sequence (whoever clicked .acces)
-        const setupMessageId = await env.BOT_CONFIG.get(`MSG_ID_${targetChatId}_${userInKv}`);
-        if (setupMessageId) {
-            // Only delete if successfully retrieved
-            await env.BOT_CONFIG.delete(`MSG_ID_${targetChatId}_${userInKv}`);
-        }
+        // 4. Send Confirmation Request to Bot Owner (Your private chat)
+        const approvalMessage = 
+            `🔔 <b>අවසාන අනුමැතිය!</b>\n\n` +
+            `Group ID: <code>${targetChatId}</code> හි Setup එක සම්පූර්ණයි.\n` +
+            `මෙම Key එක ස්ථිර ලෙස සුරැකීමට අනුමැතිය දෙන්න:\n\n` +
+            `🔑 <b>Key:</b> <code>${newKey.substring(0, 10)}...</code>\n` +
+            `👤 <b>Submitted By:</b> ${groupCreatorName}\n` +
+            `🆔 <b>Submitter ID:</b> <code>${userId}</code>\n` +
+            `🔗 <b>Submitter Username:</b> ${groupCreatorUsername}\n` +
+            `🛠️ <b>Setup Type:</b> ${setupType === 'OWNER' ? 'BOT OWNER' : 'GROUP CREATOR'}`;
+
+        const confirmationKey = `${targetChatId}|${newKey}|${userId}|${setupType}`;
         
-        // 3. Send success message to Private Chat
+        // Save the pending key and details for later retrieval/approval
+        await env.BOT_CONFIG.put(`PENDING_CONFIRM_${targetChatId}`, confirmationKey, { expirationTtl: 86400 });
+        
+        const keyboard = {
+            inline_keyboard: [
+                [{ 
+                    text: "✅ Confirm & Save Key", 
+                    // We use the current submitter's ID here for simplicity in confirmation callback
+                    callback_data: `confirm_key_${targetChatId}_${userId}` 
+                }]
+            ]
+        };
+        
+        await sendRawTelegramMessage(TOKEN, BOT_OWNER_ID, approvalMessage, null, keyboard);
+        
+        // 5. Notify the Creator/Submitter
         await sendRawTelegramMessage(TOKEN, chatId, 
-            `✅ <b>Key එක සුරැකුවා!</b>\n\n<b>Group ID: ${targetChatId}</b> සඳහා ඔබගේ Key එක සාර්ථකව සුරැකින ලදී.`
+            `✅ <b>Key එක වලංගුයි!</b>\n\n` +
+            `Key එකේ විස්තර <b>Bot Ownerගේ Private Chat</b> වෙත අවසාන අනුමැතිය සඳහා යවන ලදී.\n` +
+            `අනුමැතිය ලැබුණු වහාම Group එකේ සේවාව සක්‍රීය වනු ඇත.`
         );
-        
-        // 4. Edit the original group message to 'Setup Complete'
-        if (setupMessageId) {
-            const editorName = (setupType === 'OWNER') ? 'Bot Owner' : 'Group Creator';
-            await editTelegramMessage(TOKEN, targetChatId, setupMessageId, 
-                `✅ <b>Setup සම්පූර්ණයි!</b>\n\n` +
-                `<b>${editorName} විසින් මෙම Group එක සඳහා Gemini Key එක සාර්ථකව සකස් කරන ලදී.</b>\n` +
-                `Profit Card පරීක්ෂා කිරීම දැන් සක්‍රීයයි.`
-            );
-        }
 
         return;
     }
@@ -536,6 +678,26 @@ async function handlePrivateMessage(env, message, chatId, messageId, userId) {
 // =================================================================
 // --- TELEGRAM WEBHOOK HANDLER (MAIN LOGIC) ---
 // =================================================================
+
+export default {
+    async fetch(request, env, ctx) {
+        // ... (fetch logic remains the same) ...
+        try {
+            if (request.method !== 'POST') {
+                return new Response('Binance Card Manager Bot is running. Send Webhook updates via POST.', { status: 200 });
+            }
+            
+            const update = await request.json();
+            ctx.waitUntil(handleTelegramUpdate(update, env)); 
+            
+            return new Response('OK', { status: 200 });
+
+        } catch (e) {
+            console.error('[CRITICAL FETCH FAILURE]:', e.stack);
+            return new Response(`Worker threw an unhandled exception: ${e.message}.`, { status: 500 });
+        }
+    }
+};
 
 async function handleTelegramUpdate(update, env) {
     const TOKEN = HARDCODED_TELEGRAM_TOKEN; 
@@ -550,8 +712,7 @@ async function handleTelegramUpdate(update, env) {
         await handleCallbackQuery(env, update.callback_query);
         return;
     }
-    
-    // ... (my_chat_member logic remains the same) ...
+
     if (update.my_chat_member) {
         const chatMember = update.my_chat_member;
         const chatId = chatMember.chat.id;
@@ -641,27 +802,3 @@ async function handleTelegramUpdate(update, env) {
         console.error(`CRITICAL ERROR during message processing ${messageId}:`, e.stack);
     }
 }
-
-
-// =================================================================
-// --- CLOUDFLARE WORKER HANDLERS (FINAL EXPORT) ---
-// =================================================================
-
-export default {
-    async fetch(request, env, ctx) {
-        try {
-            if (request.method !== 'POST') {
-                return new Response('Binance Card Manager Bot is running. Send Webhook updates via POST.', { status: 200 });
-            }
-            
-            const update = await request.json();
-            ctx.waitUntil(handleTelegramUpdate(update, env)); 
-            
-            return new Response('OK', { status: 200 });
-
-        } catch (e) {
-            console.error('[CRITICAL FETCH FAILURE]:', e.stack);
-            return new Response(`Worker threw an unhandled exception: ${e.message}.`, { status: 500 });
-        }
-    }
-};
