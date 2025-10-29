@@ -10,7 +10,7 @@ const HARDCODED_CONFIG = {
     // 🛑 ඔබේ සත්‍ය දත්ත මගින් ප්‍රතිස්ථාපනය කරන්න
     TELEGRAM_TOKEN: '8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8', // ⬅️ Replace with your BOT TOKEN
     MAIN_CHAT_ID: '-1003112433339',                 // ⬅️ Replace with your TARGET GROUP/CHANNEL ID
-    GEMINI_API_KEY: 'AIzaSyAdoKzVMv1VZK885fuID9CEpdc37SD7cgw', // ⬅️ Replace with your GEMINI KEY
+    GEMINI_API_KEY: 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU', // ⬅️ Replace with your GEMINI KEY
 };
 
 // =================================================================
@@ -133,7 +133,7 @@ async function fetchFileAsBase64(filePath) {
 async function checkImageForProfitCard(base64Image, mimeType = 'image/jpeg') {
     const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
 
-    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'AIzaSyAdoKzVMv1VZK885fuID9CEpdc37SD7cgw') {
+    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU') {
         console.error("Gemini AI: API Key is missing or placeholder.");
         return false; 
     }
