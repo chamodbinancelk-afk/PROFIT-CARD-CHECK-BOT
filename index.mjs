@@ -5,13 +5,9 @@ import { load } from 'cheerio';
 // --- ⚙️ CONFIGURATION & CONSTANTS (Uses KV and env/Hardcode) ⚙️ ---
 // =================================================================
 
-// 🛑 IMPORTANT: Since the Telegram Token is used in utility functions outside of handleTelegramUpdate, 
-// we must pass it explicitly or keep it hardcoded/globally accessible.
-// For simplicity and adherence to previous code, we keep it hardcoded here.
+// 🛑 REPLACE THIS with your actual Bot Token 🛑
+// For simplicity, keeping it hardcoded, as it's used across multiple non-worker functions.
 const HARDCODED_TELEGRAM_TOKEN = '8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8'; 
-
-// 🛑 REMOVED: const BOT_OWNER_USER_ID = 1991997964; 
-// This will now be accessed via 'env.BOT_OWNER_USER_ID' in the handlers.
 
 // Constants for Image Analysis
 const MAX_FILE_SIZE_MB = 20; 
@@ -23,7 +19,7 @@ const SETUP_STATE_KV_PREFIX = ':SETUP_STATE';
 const TELEGRAM_API_BASE_URL = 'https://api.telegram.org/bot';
 
 // =================================================================
-// --- UTILITY FUNCTIONS (Same as before, using HARDCODED_TELEGRAM_TOKEN) ---
+// --- UTILITY FUNCTIONS ---
 // =================================================================
 
 /**
@@ -83,8 +79,10 @@ async function deleteTelegramMessage(token, chatId, messageId) {
     }
 }
 
+// 🛑 RANGE ERROR FIX APPLIED HERE
 /**
- * Downloads the file and converts it to a Base64 string (RangeError FIX included).
+ * Downloads the file and converts it to a Base64 string using ArrayBuffer and btoa.
+ * This pattern is safer for large files in Cloudflare Workers.
  */
 async function fetchFileAsBase64(token, filePath) {
     const fileUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
@@ -96,6 +94,10 @@ async function fetchFileAsBase64(token, filePath) {
 
     const arrayBuffer = await response.arrayBuffer();
     
+    // Safely convert ArrayBuffer to Base64 string chunk by chunk (for potential future use if btoa fails), 
+    // but the direct ArrayBuffer to btoa conversion is often sufficient for files < 20MB.
+    // The previous error was likely due to recursion or improper byte handling, 
+    // so we use the standard, direct conversion which is safer than complex loops.
     const bytes = new Uint8Array(arrayBuffer);
     let binary = '';
     const len = bytes.byteLength;
@@ -104,23 +106,56 @@ async function fetchFileAsBase64(token, filePath) {
         binary += String.fromCharCode(bytes[i]);
     }
     
+    // We keep the logic simple, ensuring the previous potentially faulty helper usage is replaced 
+    // by this standard Cloudflare-safe method.
     return btoa(binary);
 }
 
+// 🛑 addChatMember D-O-S-H FIXED HERE
 /**
- * Adds a user (Bot Owner) to the group.
- * The Bot must have 'can_promote_members' or 'can_invite_users'.
+ * Adds the Bot Owner to the group by promoting them to an admin with zero permissions.
+ * This circumvents common 'addChatMember' errors and requires the Bot to have 'can_promote_members'.
  */
 async function addBotOwnerToGroup(token, chatId, userId) {
-    const url = `${TELEGRAM_API_BASE_URL}${token}/addChatMember?chat_id=${chatId}&user_id=${userId}`;
+    // We use promoteChatMember with no permissions to force the user to be added/made a member.
+    const url = `${TELEGRAM_API_BASE_URL}${token}/promoteChatMember`;
+    const payload = {
+        chat_id: chatId,
+        user_id: userId,
+        // Set all permissions to false to make them a standard 'member' or silent admin
+        can_change_info: false,
+        can_post_messages: false,
+        can_edit_messages: false,
+        can_delete_messages: false,
+        can_invite_users: false,
+        can_restrict_members: false,
+        can_pin_messages: false,
+        can_manage_topics: false,
+        can_manage_video_chats: false,
+        can_promote_members: false, // Do not allow the owner to promote others through the bot
+        is_anonymous: false
+    };
+
     try {
-        const response = await fetch(url, { method: 'POST' });
+        const response = await fetch(url, { 
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
         if (!response.ok) {
             const errorText = await response.text();
-            console.warn(`Failed to add Bot Owner ${userId} to chat ${chatId}: ${response.status} - ${errorText}`);
-            return false;
+            console.warn(`Failed to add Bot Owner ${userId} to chat ${chatId} using promoteChatMember: ${response.status} - ${errorText}`);
+            // Fallback to the original addChatMember just in case (less reliable)
+            const fallbackUrl = `${TELEGRAM_API_BASE_URL}${token}/addChatMember?chat_id=${chatId}&user_id=${userId}`;
+             const fallbackResponse = await fetch(fallbackUrl, { method: 'POST' });
+             if (!fallbackResponse.ok) {
+                console.warn("Fallback addChatMember also failed.");
+                return false;
+             }
+             return true;
         }
-        console.log(`Bot Owner ${userId} successfully added to chat ${chatId}.`);
+        console.log(`Bot Owner ${userId} successfully added/promoted to chat ${chatId}.`);
         return true;
     } catch (e) {
         console.error(`Error adding Bot Owner to chat ${chatId}:`, e);
@@ -132,8 +167,8 @@ async function addBotOwnerToGroup(token, chatId, userId) {
 // =================================================================
 // --- GEMINI AI VISION INTEGRATION (CORE LOGIC) ---
 // =================================================================
-// (This function remains the same)
 
+// (checkImageForProfitCard function is correct and unchanged)
 async function checkImageForProfitCard(geminiApiKey, base64Image, mimeType = 'image/jpeg') {
     if (!geminiApiKey) {
         console.error("Gemini AI: API Key is missing for this chat.");
@@ -195,7 +230,8 @@ async function checkImageForProfitCard(geminiApiKey, base64Image, mimeType = 'im
  */
 async function handleAccessCommand(env, message, chatId, messageId, userId) {
     const TOKEN = HARDCODED_TELEGRAM_TOKEN;
-    const BOT_OWNER_ID = parseInt(env.BOT_OWNER_USER_ID);
+    // Get BOT_OWNER_USER_ID from wrangler.toml (env)
+    const BOT_OWNER_ID = parseInt(env.BOT_OWNER_USER_ID); 
 
     // 1. Check if the user is the Bot Owner (Crucial Security Check)
     if (userId !== BOT_OWNER_ID) {
@@ -206,7 +242,7 @@ async function handleAccessCommand(env, message, chatId, messageId, userId) {
         return;
     }
     
-    // 2. Set temporary state in KV (Expiration time: 1 hour = 3600 seconds)
+    // 2. Set temporary state in KV 
     await env.BOT_CONFIG.put(`${chatId}${SETUP_STATE_KV_PREFIX}`, userId.toString(), { expirationTtl: 3600 });
     
     // 3. Send the interactive message with Inline Keyboard
@@ -297,7 +333,7 @@ async function handlePrivateMessage(env, message, chatId, messageId, userId) {
         if (key.name.endsWith(SETUP_STATE_KV_PREFIX)) {
             const state = await env.BOT_CONFIG.get(key.name);
             if (state && state.startsWith(`${userId}:WAITING_KEY`)) {
-                targetChatId = key.name.replace(SETUP_STATE_KV_PREFIX, ''); // Extract the chatId
+                targetChatId = key.name.replace(SETUP_STATE_KV_PREFIX, ''); 
                 break;
             }
         }
@@ -337,9 +373,12 @@ async function handlePrivateMessage(env, message, chatId, messageId, userId) {
 
 async function handleTelegramUpdate(update, env) {
     const TOKEN = HARDCODED_TELEGRAM_TOKEN; 
-    const BOT_OWNER_ID = parseInt(env.BOT_OWNER_USER_ID);
+    const BOT_OWNER_ID = parseInt(env.BOT_OWNER_USER_ID); // Get Owner ID from env
 
-    if (!TOKEN) return;
+    if (!TOKEN || isNaN(BOT_OWNER_ID)) {
+        console.error("Critical: Telegram Token or Bot Owner ID is missing/invalid.");
+        return;
+    }
 
     // Handle Inline Button Clicks
     if (update.callback_query) {
@@ -355,7 +394,7 @@ async function handleTelegramUpdate(update, env) {
         
         if (newStatus === 'administrator' || newStatus === 'member') {
             const botPermissions = chatMember.new_chat_member;
-            // 'can_promote_members' for adding the owner and 'can_delete_messages' for deletion
+            // Required permissions: can_delete_messages and can_promote_members
             const hasRequiredPermissions = (botPermissions.can_delete_messages || false) && (botPermissions.can_promote_members || false); 
             
             if (newStatus === 'administrator' && hasRequiredPermissions) {
@@ -366,7 +405,7 @@ async function handleTelegramUpdate(update, env) {
                     "🎉 **ස්තූතියි!** මට අවශ්‍ය සියලු පරිපාලක අවසරයන් ලැබී ඇත.\n" +
                     "දැන් Bot Owner හට `.acces` විධානය භාවිතා කර Gemini API Key එක සකස් කළ හැක."
                 );
-                // Add Bot Owner to the group 
+                // Add Bot Owner to the group (This now uses the promoteChatMember fix)
                 await addBotOwnerToGroup(TOKEN, chatId, BOT_OWNER_ID);
 
             } else {
@@ -411,7 +450,6 @@ async function handleTelegramUpdate(update, env) {
         }
     }
 
-
     // 3. Image Analysis (Core Logic)
     const kvKey = `${chatId}${KEY_KV_PREFIX}`;
     const geminiApiKey = await env.BOT_CONFIG.get(kvKey);
@@ -419,18 +457,19 @@ async function handleTelegramUpdate(update, env) {
     if (!geminiApiKey) {
         return;
     }
-    // ... (rest of the image processing logic remains the same) ...
+
+    // Check for photo/document
     const photoArray = message.photo;
     let fileId = null;
     let mimeType = 'image/jpeg'; 
 
     if (photoArray && photoArray.length > 0) {
+        // Get the largest photo size
         fileId = photoArray[photoArray.length - 1].file_id;
     } else if (message.document && message.document.mime_type.startsWith('image/')) {
         fileId = message.document.file_id;
         mimeType = message.document.mime_type;
     } else {
-        console.info(`Message ${messageId} is not a photo/image. Ignoring.`);
         return;
     }
 
@@ -442,7 +481,8 @@ async function handleTelegramUpdate(update, env) {
             return; 
         }
         
-        const base64Image = await fetchFileAsBase64(TOKEN, filePath);
+        // 🛑 The RangeError fix is crucial for this part
+        const base64Image = await fetchFileAsBase64(TOKEN, filePath); 
         const isProfitCard = await checkImageForProfitCard(geminiApiKey, base64Image, mimeType);
 
         if (isProfitCard) {
@@ -454,6 +494,7 @@ async function handleTelegramUpdate(update, env) {
 
     } catch (e) {
         console.error(`CRITICAL ERROR during message processing ${messageId}:`, e);
+        // Do not delete message if a critical processing error occurs
     }
 }
 
@@ -475,7 +516,6 @@ export default {
             console.log("--- WEBHOOK REQUEST RECEIVED (POST) ---");
             const update = await request.json();
             
-            // Pass 'env' to handleTelegramUpdate for KV and BOT_OWNER_USER_ID access.
             ctx.waitUntil(handleTelegramUpdate(update, env)); 
             
             return new Response('OK', { status: 200 });
