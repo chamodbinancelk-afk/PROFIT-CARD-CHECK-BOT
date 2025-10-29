@@ -4,13 +4,16 @@ import { load } from 'cheerio';
 // =================================================================
 // --- 🔴 HARDCODED CONFIGURATION (KEYS INSERTED DIRECTLY) 🔴 ---
 // ⚠️ WARNING: THIS IS HIGHLY INSECURE. USE CLOUDFLARE SECRETS IN PRODUCTION.
+// 🛑 REPLACE ALL THREE VALUES BELOW WITH YOUR ACTUAL DATA 🛑
 // =================================================================
 
 const HARDCODED_CONFIG = {
-    // 🛑 ඔබේ සත්‍ය දත්ත මගින් ප්‍රතිස්ථාපනය කරන්න
-    TELEGRAM_TOKEN: '8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8', // ⬅️ Replace with your BOT TOKEN
-    MAIN_CHAT_ID: '-1003112433339',                 // ⬅️ Replace with your TARGET GROUP/CHANNEL ID
-    GEMINI_API_KEY: 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU', // ⬅️ Replace with your GEMINI KEY
+    // 🛑 REPLACE THIS with your actual BOT TOKEN 🛑
+    TELEGRAM_TOKEN: '8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8', 
+    // 🛑 REPLACE THIS with your TARGET GROUP/CHANNEL ID 🛑
+    MAIN_CHAT_ID: '-1003112433339',                 
+    // 🛑 REPLACE THIS with your ACTUAL, VALID GEMINI API KEY 🛑
+    GEMINI_API_KEY: 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU', 
 };
 
 // =================================================================
@@ -133,14 +136,16 @@ async function fetchFileAsBase64(filePath) {
 async function checkImageForProfitCard(base64Image, mimeType = 'image/jpeg') {
     const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
 
+    // Check for missing or placeholder key
     if (!GEMINI_API_KEY || GEMINI_API_KEY === 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU') {
-        console.error("Gemini AI: API Key is missing or placeholder.");
+        console.error("Gemini AI: API Key is missing or placeholder. CHECK HARDCODED_CONFIG!");
         return false; 
     }
 
     const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_VISION_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
     
-    const prompt = `You are a strict Telegram moderator bot. Analyze the image. Is this a screenshot of a completed trade (Profit/Loss Card) from a major crypto exchange like Binance, Bybit, or OKX? Specifically, look for clear indicators like 'USDT Perpetual', '+[number] USDT', 'Entry Price', 'Last Price', and a referral code. Answer STRICTLY with only ONE word: 'YES' or 'NO'. Do not add any explanation or punctuation.`;
+    // Strengthened Prompt
+    const prompt = `You are a strict Telegram moderator bot. Analyze the image. Is this an official trade or profit/loss sharing card? Specifically, look for clear crypto trading elements like "Binance Futures", "USDT Perpetual", "+[number] USDT", "Entry Price", "Last Price", and a "Referral Code" or QR code. The presence of a white-on-black, clean interface, and clear trading data strongly suggests YES. Answer STRICTLY with only ONE word: 'YES' or 'NO'. Do not add any explanation or punctuation.`;
 
     const payload = {
         contents: [{ 
@@ -278,7 +283,6 @@ export default {
             const update = await request.json();
             
             // Execute the core logic asynchronously and wait for completion
-            // Note: We don't pass 'env' as config is hardcoded.
             ctx.waitUntil(handleTelegramUpdate(update));
             
             // Respond immediately to Telegram to prevent retries
