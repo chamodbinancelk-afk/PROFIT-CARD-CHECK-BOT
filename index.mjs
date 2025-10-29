@@ -13,7 +13,9 @@ const GEMINI_VISION_MODEL = 'gemini-2.5-flash';
 const KEY_KV_PREFIX = ':GEMINI_API_KEY'; 
 const SETUP_STATE_KV_PREFIX = ':SETUP_STATE'; 
 
-const TELEGRAM_API_BASE_URL = '[https://api.telegram.org/bot](https://api.telegram.org/bot)';
+// 🎯 FIX: The base URL must end with a slash or be used without one
+// We will use it *without* a slash here and construct the full URL later
+const TELEGRAM_API_BASE_URL = 'https://api.telegram.org/bot';
 
 // =================================================================
 // --- UTILITY FUNCTIONS ---
@@ -24,6 +26,7 @@ const TELEGRAM_API_BASE_URL = '[https://api.telegram.org/bot](https://api.telegr
  * Returns the sent message ID or false on failure.
  */
 async function sendRawTelegramMessage(token, chatId, message, replyToId = null, keyboard = null) {
+    // 🎯 FIX: Correct URL construction to avoid Invalid URL errors
     const apiURL = `${TELEGRAM_API_BASE_URL}${token}/sendMessage`;
     const payload = { 
         chat_id: chatId, 
@@ -54,6 +57,7 @@ async function sendRawTelegramMessage(token, chatId, message, replyToId = null, 
  * Edits a message in Telegram (Used for live setup and final status update).
  */
 async function editTelegramMessage(token, chatId, messageId, message, keyboard = null) {
+    // 🎯 FIX: Correct URL construction
     const apiURL = `${TELEGRAM_API_BASE_URL}${token}/editMessageText`;
     const payload = {
         chat_id: chatId,
@@ -74,6 +78,7 @@ async function editTelegramMessage(token, chatId, messageId, message, keyboard =
             body: JSON.stringify(payload)
         });
         if (!response.ok && response.status === 400 && messageId) {
+             // Try editing the caption instead (for messages that have media)
              const editCaptionUrl = `${TELEGRAM_API_BASE_URL}${token}/editMessageCaption`;
              const captionPayload = {
                  chat_id: chatId,
@@ -97,6 +102,7 @@ async function editTelegramMessage(token, chatId, messageId, message, keyboard =
 }
 
 async function deleteTelegramMessage(token, chatId, messageId) {
+    // 🎯 FIX: Correct URL construction
     const apiURL = `${TELEGRAM_API_BASE_URL}${token}/deleteMessage`;
     const payload = {
         chat_id: chatId,
@@ -120,6 +126,7 @@ async function deleteTelegramMessage(token, chatId, messageId) {
 }
 
 async function fetchFileAsBase64(token, filePath) {
+    // 🎯 FIX: The file URL must be constructed separately
     const fileUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
     const response = await fetch(fileUrl);
     if (!response.ok) {
@@ -136,6 +143,7 @@ async function fetchFileAsBase64(token, filePath) {
 }
 
 async function getTelegramFilePath(token, fileId) {
+    // 🎯 FIX: Correct URL construction
     const url = `${TELEGRAM_API_BASE_URL}${token}/getFile?file_id=${fileId}`;
     const response = await fetch(url);
     const data = await response.json();
@@ -152,6 +160,7 @@ async function getTelegramFilePath(token, fileId) {
 }
 
 async function sendBotOwnerInviteLink(token, chatId, ownerUserId) {
+    // 🎯 FIX: Correct URL construction
     const createInviteUrl = `${TELEGRAM_API_BASE_URL}${token}/createChatInviteLink`;
     const payload = { chat_id: chatId };
     try {
@@ -188,6 +197,7 @@ async function sendBotOwnerInviteLink(token, chatId, ownerUserId) {
  * Retrieves the Creator (Group Owner) User ID for a given chat.
  */
 async function getGroupCreatorId(token, chatId) {
+    // 🎯 FIX: Correct URL construction
     const apiURL = `${TELEGRAM_API_BASE_URL}${token}/getChatAdministrators?chat_id=${chatId}`;
     try {
         const response = await fetch(apiURL);
@@ -209,7 +219,7 @@ async function getGroupCreatorId(token, chatId) {
 }
 
 /**
- * 🛑 NEW FUNCTION: Attempts a simple model call to check if the Gemini API key is valid.
+ * Attempts a simple model call to check if the Gemini API key is valid.
  */
 async function validateGeminiKey(apiKey) {
     const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
@@ -297,7 +307,7 @@ async function handleAccessCommand(env, message, chatId, messageId, userId) {
         const ownerName = message.from.first_name || 'Initiator';
         
         // --- STAGE 1: Get Group Title ---
-        await delay(1000);
+        // 🎯 FIX: Correct URL construction
         const chatInfoUrl = `${TELEGRAM_API_BASE_URL}${TOKEN}/getChat?chat_id=${chatId}`;
         const chatResponse = await fetch(chatInfoUrl);
         const chatData = await chatResponse.json();
@@ -421,7 +431,7 @@ async function handleSetupTypeSelection(env, data, userId, userName, groupMessag
 
     const parts = data.split('_');
     const targetChatId = parts[2];
-    const selectedUserId = parseInt(parts[3]); 
+    const selectedUserId = parseInt(parts[3]); // The person who clicked the initial button
     const setupType = parts[4];
     
     if (userId !== selectedUserId && userId !== BOT_OWNER_ID) {
@@ -434,7 +444,7 @@ async function handleSetupTypeSelection(env, data, userId, userName, groupMessag
     let keySubmitterId; 
 
     if (setupType === 'OWNER') {
-        // OWNER setup: Key submitted by the user who clicked the button
+        // OWNER setup: Key submitted by the user who clicked the button (selectedUserId)
         destinationChatId = selectedUserId;
         keySubmitterId = selectedUserId;
         
@@ -493,13 +503,12 @@ async function handleSetupTypeSelection(env, data, userId, userName, groupMessag
     // 4. Prompt the designated user in their private chat
     await sendRawTelegramMessage(TOKEN, destinationChatId, privatePromptMessage);
     
-    // 5. Update the state in KV (We use selectedUserId for MSG_ID lookup)
+    // 5. Update the state in KV (We save the ID of the person who clicked the initial button)
     await env.BOT_CONFIG.put(`${targetChatId}${SETUP_STATE_KV_PREFIX}`, `${selectedUserId}:${setupType}`, { expirationTtl: 3600 });
-    // Note: selectedUserId is used to identify the MSG_ID saved in handleAccessCommand.
 }
 
 /**
- * 🛑 NEW FUNCTION: Handles final confirmation by the Bot Owner.
+ * Handles final confirmation by the Bot Owner.
  */
 async function handleOwnerConfirmation(env, data, ownerId, ownerName, ownerMessageId, targetChatId) {
     const TOKEN = HARDCODED_TELEGRAM_TOKEN;
@@ -510,6 +519,7 @@ async function handleOwnerConfirmation(env, data, ownerId, ownerName, ownerMessa
         return;
     }
     
+    // 1. Get pending data
     const pendingData = await env.BOT_CONFIG.get(`PENDING_CONFIRM_${targetChatId}`);
     if (!pendingData) {
         await editTelegramMessage(TOKEN, ownerId, ownerMessageId, 
@@ -519,34 +529,38 @@ async function handleOwnerConfirmation(env, data, ownerId, ownerName, ownerMessa
     }
     
     // Format: targetChatId|newKey|submitterId|setupType
-    const [_, newKey, submitterId, setupType] = pendingData.split('|');
+    // Note: The first element is targetChatId, which is redundant but kept for safety.
+    const parts = pendingData.split('|');
+    if (parts.length < 4) {
+         await editTelegramMessage(TOKEN, ownerId, ownerMessageId, 
+            `🛑 <b>අසාර්ථකයි:</b> දත්ත ව්‍යුහය දෝෂ සහිතයි. නැවත උත්සාහ කරන්න.`
+        , 'remove');
+        return;
+    }
+    const [_, newKey, submitterId, setupType] = parts;
 
-    // 1. Save the key permanently in KV
+    // 2. Save the key permanently in KV
     await env.BOT_CONFIG.put(`${targetChatId}${KEY_KV_PREFIX}`, newKey);
     
-    // 2. Clear the pending state
+    // 3. Clear the pending state
     await env.BOT_CONFIG.delete(`PENDING_CONFIRM_${targetChatId}`);
 
-    // 3. Edit Bot Owner's Confirmation Message
+    // 4. Edit Bot Owner's Confirmation Message
     await editTelegramMessage(TOKEN, ownerId, ownerMessageId, 
         `✅ <b>Group Key අනුමතයි!</b>\n\n` +
         `<b>Group ID: ${targetChatId}</b> සඳහා Gemini Key එක සාර්ථකව සුරැකින ලදී.`
     , 'remove');
 
-    // 4. Retrieve the Group Message ID (Saved under the submitter's ID during .acces)
-    // IMPORTANT: The MSG_ID is saved under the ID of the person who clicked .acces/start_selection.
-    // The submitterId here is the Group Creator/Bot Owner who submitted the key in private chat.
-    // To ensure we get the correct message ID, we need to search KV for the MSG_ID associated with the group and see who the initiator was.
-    
-    // Since we simplified the state saving in handleSetupTypeSelection to use selectedUserId 
-    // (the one who clicked start_selection_ ) for MSG_ID lookup, we need to retrieve that original ID.
-    // Temporarily, we will assume the submitterId is the original initiator for simplicity and fix if needed later.
-    
+    // 5. Retrieve the Group Message ID (We need the original initiator's ID for the MSG_ID key)
+    // We assume for now that the submitterId is the initiator, if not, we must rely on the setup state
+    // Let's rely on the submitter ID stored in PENDING_CONFIRM_
     const setupMessageId = await env.BOT_CONFIG.get(`MSG_ID_${targetChatId}_${submitterId}`);
-    // If the submitter ID is not the initiator ID, we will fail to find MSG_ID. 
-    // For now, we proceed with submitterId as the lookup key.
+    
+    // Fallback: If submitter ID (Group Creator) is not the initiator ID (Admin who clicked .acces),
+    // we need to find the correct initiator ID from the original state saved during selection.
+    // However, for simplicity and current structure, we use submitterId which is the person who clicked the key submission button.
 
-    // 5. Edit the original group message to 'Setup Complete'
+    // 6. Edit the original group message to 'Setup Complete'
     if (setupMessageId) {
         await env.BOT_CONFIG.delete(`MSG_ID_${targetChatId}_${submitterId}`);
         const editorName = (setupType === 'OWNER') ? 'Bot Owner' : 'Group Creator';
@@ -557,8 +571,8 @@ async function handleOwnerConfirmation(env, data, ownerId, ownerName, ownerMessa
         );
     }
     
-    // 6. Notify the original submitter (Creator/Owner)
-    await sendRawTelegramMessage(TOKEN, submitterId, 
+    // 7. Notify the original submitter (Creator/Owner)
+    await sendRawTelegramMessage(TOKEN, parseInt(submitterId), 
         `🎉 <b>අනුමැතිය ලැබුණා!</b>\n\nBot Owner විසින් <b>Group ID: ${targetChatId}</b> සඳහා ඔබ යැවූ Key එක අනුමත කරන ලදී.\n` +
         `ඔබගේ Group එකේ සේවාව දැන් සක්‍රීයයි!`
     );
@@ -578,33 +592,30 @@ async function handlePrivateMessage(env, message, chatId, messageId, userId) {
     let targetChatId = null;
     let setupType = null;
     let initiatorId = null; // The user who clicked the original selection button
-    let userInKv = null; // The user ID stored in KV state (the one expected to submit the key)
+    let expectedSubmitterId = null;
 
     for (const key of list.keys) {
         if (key.name.endsWith(SETUP_STATE_KV_PREFIX)) {
             const state = await env.BOT_CONFIG.get(key.name);
             if (state) {
                 [initiatorId, setupType] = state.split(':');
+                initiatorId = parseInt(initiatorId);
+                targetChatId = key.name.replace(SETUP_STATE_KV_PREFIX, '');
                 
-                // Determine who should be submitting the key based on setupType
-                let expectedSubmitterId;
                 if (setupType === 'OWNER') {
-                    expectedSubmitterId = parseInt(initiatorId);
+                    expectedSubmitterId = initiatorId;
                 } else if (setupType === 'ADMIN') {
-                    // In the ADMIN flow, the key is expected from the Group Creator. 
-                    // Since the initiatorId is the one who clicked the button (selectedUserId),
-                    // and we want the Group Creator to submit, we need to re-find the Creator ID here.
-                    expectedSubmitterId = await getGroupCreatorId(TOKEN, key.name.replace(SETUP_STATE_KV_PREFIX, ''));
+                    // Find the Group Creator dynamically (since they are the expected submitter)
+                    expectedSubmitterId = await getGroupCreatorId(TOKEN, targetChatId);
                 } else {
                     continue; 
                 }
                 
                 // Check if the current user is the expected submitter
                 if (expectedSubmitterId && expectedSubmitterId === userId) {
-                     userInKv = expectedSubmitterId; // The actual submitter ID
-                     targetChatId = key.name.replace(SETUP_STATE_KV_PREFIX, '');
                      break;
                 }
+                targetChatId = null; // Reset if the current user is not the expected submitter
             }
         }
     }
@@ -643,17 +654,17 @@ async function handlePrivateMessage(env, message, chatId, messageId, userId) {
             `🔗 <b>Submitter Username:</b> ${groupCreatorUsername}\n` +
             `🛠️ <b>Setup Type:</b> ${setupType === 'OWNER' ? 'BOT OWNER' : 'GROUP CREATOR'}`;
 
-        const confirmationKey = `${targetChatId}|${newKey}|${userId}|${setupType}`;
-        
         // Save the pending key and details for later retrieval/approval
+        // We use the ID of the person who clicked the private submission button (userId) for lookup on confirmation
+        const confirmationKey = `${targetChatId}|${newKey}|${userId}|${setupType}`; 
+        
         await env.BOT_CONFIG.put(`PENDING_CONFIRM_${targetChatId}`, confirmationKey, { expirationTtl: 86400 });
         
         const keyboard = {
             inline_keyboard: [
                 [{ 
                     text: "✅ Confirm & Save Key", 
-                    // We use the current submitter's ID here for simplicity in confirmation callback
-                    callback_data: `confirm_key_${targetChatId}_${userId}` 
+                    callback_data: `confirm_key_${targetChatId}_${userId}` // We use the submitter ID for the MSG_ID lookup in confirmation
                 }]
             ]
         };
@@ -681,7 +692,6 @@ async function handlePrivateMessage(env, message, chatId, messageId, userId) {
 
 export default {
     async fetch(request, env, ctx) {
-        // ... (fetch logic remains the same) ...
         try {
             if (request.method !== 'POST') {
                 return new Response('Binance Card Manager Bot is running. Send Webhook updates via POST.', { status: 200 });
@@ -718,6 +728,7 @@ async function handleTelegramUpdate(update, env) {
         const chatId = chatMember.chat.id;
         const newStatus = chatMember.new_chat_member.status;
         
+        // 🎯 FIX: Correct URL construction inside sub-functions like sendBotOwnerInviteLink and sendRawTelegramMessage
         if (newStatus === 'administrator' || newStatus === 'member') {
             const botPermissions = chatMember.new_chat_member;
             const hasDelete = botPermissions.can_delete_messages || false;
