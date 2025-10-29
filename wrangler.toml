@@ -8,7 +8,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [[kv_namespaces]]
 binding = "BOT_CONFIG"  # This is the variable name used in the JavaScript code (env.BOT_CONFIG)
-id = "YOUR_KV_NAMESPACE_ID_HERE"  # 🛑 REPLACE WITH YOUR KV NAMESPACE ID (e.g., a long string like 'f72b38...')
+id = "ec6bc090856641e9b2aca785d7a34727"  # 🛑 REPLACE WITH YOUR KV NAMESPACE ID (e.g., a long string like 'f72b38...')
 
 [vars]
 # We remove BOT_OWNER_USER_ID from JS and put it here
