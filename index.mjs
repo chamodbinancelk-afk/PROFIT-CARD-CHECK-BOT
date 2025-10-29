@@ -6,26 +6,21 @@ import { load } from 'cheerio';
 // =================================================================
 
 // 🛑 REPLACE THIS with your actual Bot Token 🛑
-// For simplicity, keeping it hardcoded, as it's used across multiple non-worker functions.
 const HARDCODED_TELEGRAM_TOKEN = '8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8'; 
 
-// Constants for Image Analysis
 const MAX_FILE_SIZE_MB = 20; 
 const GEMINI_VISION_MODEL = 'gemini-2.5-flash';
 const KEY_KV_PREFIX = ':GEMINI_API_KEY'; 
 const SETUP_STATE_KV_PREFIX = ':SETUP_STATE'; 
 
-// --- UTILITY CONSTANTS ---
 const TELEGRAM_API_BASE_URL = 'https://api.telegram.org/bot';
 
 // =================================================================
 // --- UTILITY FUNCTIONS ---
 // =================================================================
 
-/**
- * Sends a message to Telegram.
- */
 async function sendRawTelegramMessage(token, chatId, message, replyToId = null, keyboard = null) {
+    // ... (Implementation remains the same) ...
     const apiURL = `${TELEGRAM_API_BASE_URL}${token}/sendMessage`;
     const payload = { 
         chat_id: chatId, 
@@ -51,10 +46,8 @@ async function sendRawTelegramMessage(token, chatId, message, replyToId = null, 
     }
 }
 
-/**
- * Deletes a message from the specified chat.
- */
 async function deleteTelegramMessage(token, chatId, messageId) {
+    // ... (Implementation remains the same) ...
     const apiURL = `${TELEGRAM_API_BASE_URL}${token}/deleteMessage`;
     const payload = {
         chat_id: chatId,
@@ -79,10 +72,8 @@ async function deleteTelegramMessage(token, chatId, messageId) {
     }
 }
 
-// 🛑 RANGE ERROR FIX APPLIED HERE
 /**
- * Downloads the file and converts it to a Base64 string using ArrayBuffer and btoa.
- * This pattern is safer for large files in Cloudflare Workers.
+ * 🛑 FIX for RangeError (ArrayBuffer to Base64)
  */
 async function fetchFileAsBase64(token, filePath) {
     const fileUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
@@ -93,11 +84,6 @@ async function fetchFileAsBase64(token, filePath) {
     }
 
     const arrayBuffer = await response.arrayBuffer();
-    
-    // Safely convert ArrayBuffer to Base64 string chunk by chunk (for potential future use if btoa fails), 
-    // but the direct ArrayBuffer to btoa conversion is often sufficient for files < 20MB.
-    // The previous error was likely due to recursion or improper byte handling, 
-    // so we use the standard, direct conversion which is safer than complex loops.
     const bytes = new Uint8Array(arrayBuffer);
     let binary = '';
     const len = bytes.byteLength;
@@ -106,59 +92,73 @@ async function fetchFileAsBase64(token, filePath) {
         binary += String.fromCharCode(bytes[i]);
     }
     
-    // We keep the logic simple, ensuring the previous potentially faulty helper usage is replaced 
-    // by this standard Cloudflare-safe method.
     return btoa(binary);
 }
 
-// 🛑 addChatMember D-O-S-H FIXED HERE
 /**
- * Adds the Bot Owner to the group by promoting them to an admin with zero permissions.
- * This circumvents common 'addChatMember' errors and requires the Bot to have 'can_promote_members'.
+ * 🛑 RE-INCLUSION: Gets the file path from Telegram API. (Fixes ReferenceError)
  */
-async function addBotOwnerToGroup(token, chatId, userId) {
-    // We use promoteChatMember with no permissions to force the user to be added/made a member.
-    const url = `${TELEGRAM_API_BASE_URL}${token}/promoteChatMember`;
+async function getTelegramFilePath(token, fileId) {
+    const url = `${TELEGRAM_API_BASE_URL}${token}/getFile?file_id=${fileId}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    if (data.ok && data.result) {
+        const fileSizeMB = data.result.file_size / (1024 * 1024);
+        // Check size limit before returning the path
+        if (fileSizeMB > MAX_FILE_SIZE_MB) {
+            console.warn(`File size (${fileSizeMB.toFixed(2)}MB) exceeds maximum limit (${MAX_FILE_SIZE_MB}MB).`);
+            return null;
+        }
+        return data.result.file_path;
+    }
+    console.error(`Failed to get file path for ID ${fileId}: ${data.description || 'Unknown API Error'}`);
+    return null;
+}
+
+
+/**
+ * 🛑 FIX for 404 Owner Add Error: Creates a temporary invite link and sends it to the Bot Owner's private chat.
+ */
+async function sendBotOwnerInviteLink(token, chatId, ownerUserId) {
+    const createInviteUrl = `${TELEGRAM_API_BASE_URL}${token}/createChatInviteLink`;
     const payload = {
         chat_id: chatId,
-        user_id: userId,
-        // Set all permissions to false to make them a standard 'member' or silent admin
-        can_change_info: false,
-        can_post_messages: false,
-        can_edit_messages: false,
-        can_delete_messages: false,
-        can_invite_users: false,
-        can_restrict_members: false,
-        can_pin_messages: false,
-        can_manage_topics: false,
-        can_manage_video_chats: false,
-        can_promote_members: false, // Do not allow the owner to promote others through the bot
-        is_anonymous: false
+        // Optional: expire_date and member_limit can be set
     };
 
     try {
-        const response = await fetch(url, { 
+        const response = await fetch(createInviteUrl, { 
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
         
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.warn(`Failed to add Bot Owner ${userId} to chat ${chatId} using promoteChatMember: ${response.status} - ${errorText}`);
-            // Fallback to the original addChatMember just in case (less reliable)
-            const fallbackUrl = `${TELEGRAM_API_BASE_URL}${token}/addChatMember?chat_id=${chatId}&user_id=${userId}`;
-             const fallbackResponse = await fetch(fallbackUrl, { method: 'POST' });
-             if (!fallbackResponse.ok) {
-                console.warn("Fallback addChatMember also failed.");
-                return false;
-             }
-             return true;
+        const data = await response.json();
+
+        if (data.ok && data.result && data.result.invite_link) {
+            const inviteLink = data.result.invite_link;
+            
+            // Send the link to the Bot Owner's private chat
+            await sendRawTelegramMessage(token, ownerUserId, 
+                `🎉 **Bot එක සාර්ථකව Admin කළා!**\n\n` +
+                `ඔබ Group එකට Join වීමට, පහත Link එක භාවිතා කරන්න (Bot Owner ලෙස):\n` +
+                `🔗 <a href="${inviteLink}">Group එකට Join වන්න</a>\n\n` +
+                `*Group එකට Join වීමට ඇති වඩාත්ම විශ්වාසදායක ක්‍රමය මෙයයි.*`
+            );
+            console.log(`Successfully sent invite link to Bot Owner ${ownerUserId} for chat ${chatId}.`);
+            return true;
+        } else {
+            console.warn(`Failed to create invite link for chat ${chatId}: ${data.description || 'Unknown error'}`);
+             await sendRawTelegramMessage(token, ownerUserId, 
+                `⚠️ **Group Join වීමට Link එකක් සෑදීම අසාර්ථක විය.**\n\n` +
+                `කරුණාකර Group එකේ Admin කෙනෙක්ගෙන් Link එකක් ඉල්ලා ඔබ අතින් Join වන්න.\n\n` +
+                `*Bot එකේ 'Invite Users via Link' අවසරය නැතිව ඇති.*`
+            );
+            return false;
         }
-        console.log(`Bot Owner ${userId} successfully added/promoted to chat ${chatId}.`);
-        return true;
     } catch (e) {
-        console.error(`Error adding Bot Owner to chat ${chatId}:`, e);
+        console.error(`Error sending Bot Owner invite link for chat ${chatId}:`, e);
         return false;
     }
 }
@@ -168,8 +168,8 @@ async function addBotOwnerToGroup(token, chatId, userId) {
 // --- GEMINI AI VISION INTEGRATION (CORE LOGIC) ---
 // =================================================================
 
-// (checkImageForProfitCard function is correct and unchanged)
 async function checkImageForProfitCard(geminiApiKey, base64Image, mimeType = 'image/jpeg') {
+    // ... (Implementation remains the same) ...
     if (!geminiApiKey) {
         console.error("Gemini AI: API Key is missing for this chat.");
         return false; 
@@ -209,8 +209,6 @@ async function checkImageForProfitCard(geminiApiKey, base64Image, mimeType = 'im
         const result = await response.json();
         const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text?.toUpperCase().trim();
         
-        console.log(`Gemini Vision Response: ${textResponse}`);
-
         return textResponse === 'YES';
         
     } catch (error) {
@@ -224,28 +222,18 @@ async function checkImageForProfitCard(geminiApiKey, base64Image, mimeType = 'im
 // --- TELEGRAM COMMAND & CALLBACK HANDLERS ---
 // =================================================================
 
-/**
- * Handles the .acces command (Owner-Restricted Interactive Setup Start).
- * Accesses BOT_OWNER_USER_ID via env.
- */
 async function handleAccessCommand(env, message, chatId, messageId, userId) {
+    // ... (Implementation remains the same) ...
     const TOKEN = HARDCODED_TELEGRAM_TOKEN;
-    // Get BOT_OWNER_USER_ID from wrangler.toml (env)
     const BOT_OWNER_ID = parseInt(env.BOT_OWNER_USER_ID); 
 
-    // 1. Check if the user is the Bot Owner (Crucial Security Check)
     if (userId !== BOT_OWNER_ID) {
-        await sendRawTelegramMessage(TOKEN, chatId, 
-            "🛑 **අවසර නැත.** මෙම විධානය ක්‍රියාත්මක කළ හැක්කේ Bot හි හිමිකරුට (Owner) පමණි.", 
-            messageId
-        );
+        await sendRawTelegramMessage(TOKEN, chatId, "🛑 **අවසර නැත.** මෙම විධානය ක්‍රියාත්මක කළ හැක්කේ Bot හි හිමිකරුට (Owner) පමණි.", messageId);
         return;
     }
     
-    // 2. Set temporary state in KV 
     await env.BOT_CONFIG.put(`${chatId}${SETUP_STATE_KV_PREFIX}`, userId.toString(), { expirationTtl: 3600 });
     
-    // 3. Send the interactive message with Inline Keyboard
     const setupMessage = 
         `🔑 **Gemini API Key Setup**\n\n` +
         `ඔබේ Profit Card පරීක්ෂා කිරීමේ සේවාව ආරම්භ කිරීමට, කරුණාකර පහත Button එක භාවිතා කරන්න.\n\n` +
@@ -263,21 +251,15 @@ async function handleAccessCommand(env, message, chatId, messageId, userId) {
     };
 
     await sendRawTelegramMessage(TOKEN, chatId, setupMessage, messageId, keyboard);
-    console.log(`Setup initiated for chat: ${chatId} by owner: ${userId}`);
 }
 
-
-/**
- * Handles the callback query from the Inline Button.
- * Accesses BOT_OWNER_USER_ID via env.
- */
 async function handleCallbackQuery(env, callbackQuery) {
+    // ... (Implementation remains the same) ...
     const TOKEN = HARDCODED_TELEGRAM_TOKEN;
     const userId = callbackQuery.from.id;
     const data = callbackQuery.data;
     const BOT_OWNER_ID = parseInt(env.BOT_OWNER_USER_ID);
 
-    // Acknowledge the callback query
     const ackUrl = `${TELEGRAM_API_BASE_URL}${TOKEN}/answerCallbackQuery?callback_query_id=${callbackQuery.id}`;
     await fetch(ackUrl);
     
@@ -286,48 +268,37 @@ async function handleCallbackQuery(env, callbackQuery) {
         const targetChatId = parts[2];
         const targetUserId = parseInt(parts[3]);
 
-        // Check if the user is the Bot Owner
         if (userId !== BOT_OWNER_ID || userId !== targetUserId) {
             await sendRawTelegramMessage(TOKEN, userId, "🛑 **ඔබට අවසර නැත.** මෙම සැකසීම ආරම්භ කළ පරිශීලකයාට (Bot Ownerට) පමණක් ඉදිරියට යා හැක.");
             return;
         }
 
-        // Prompt the user in their private chat
         await sendRawTelegramMessage(TOKEN, userId, 
             `✅ **Group ID: ${targetChatId}**\n\n` +
             `කරුණාකර දැන් ඔබගේ සම්පූර්ණ **Gemini API Key** එක මෙහි යවන්න.\n\n` +
             `Key එක යැවූ පසු, එය ස්වයංක්‍රීයව සුරැකෙනු ඇත.`
         );
         
-        // Update the state in KV to track the user's setup process (waiting for key)
         await env.BOT_CONFIG.put(`${targetChatId}${SETUP_STATE_KV_PREFIX}`, `${userId}:WAITING_KEY`, { expirationTtl: 3600 });
         
-        // Notify the group that the setup is continuing in a private chat
         await sendRawTelegramMessage(TOKEN, targetChatId, 
             `💬 **Set-up එක පුද්ගලික chat එකකට ගෙන යන ලදි.**\nBot Owner හට Private Chat එක පරීක්ෂා කරන්න.`
         );
     } 
 }
 
-
-/**
- * Handles private messages to save the key.
- * Accesses BOT_OWNER_USER_ID via env.
- */
 async function handlePrivateMessage(env, message, chatId, messageId, userId) {
+    // ... (Implementation remains the same) ...
     const TOKEN = HARDCODED_TELEGRAM_TOKEN;
     const text = message.text || '';
     const BOT_OWNER_ID = parseInt(env.BOT_OWNER_USER_ID);
     
-    // Only Bot Owner can set keys via private chat interaction
     if (userId !== BOT_OWNER_ID) {
         await sendRawTelegramMessage(TOKEN, chatId, "👋 Hi! මාව Group එකකට Add කරන්න. ඉන්පසු Bot Owner හට `.acces` විධානය භාවිතා කර Gemini Key එක සකස් කිරීමට දන්වන්න.");
         return;
     }
 
-    // Check if this user (Bot Owner) is currently in a setup process for ANY group
     const list = await env.BOT_CONFIG.list(); 
-    
     let targetChatId = null;
     for (const key of list.keys) {
         if (key.name.endsWith(SETUP_STATE_KV_PREFIX)) {
@@ -346,23 +317,18 @@ async function handlePrivateMessage(env, message, chatId, messageId, userId) {
             return;
         }
 
-        // Save the key permanently in KV
         await env.BOT_CONFIG.put(`${targetChatId}${KEY_KV_PREFIX}`, newKey);
-        // Clear the setup state
         await env.BOT_CONFIG.delete(`${targetChatId}${SETUP_STATE_KV_PREFIX}`);
 
         await sendRawTelegramMessage(TOKEN, chatId, 
             `✅ **Key එක සුරැකුවා!**\n\n**Group ID: ${targetChatId}** සඳහා ඔබගේ Key එක සාර්ථකව සුරැකින ලදී.\n` +
             `මෙම Group එකේ Profit Card පරීක්ෂා කිරීම දැන් ආරම්භ වේ!`
         );
-        // Also notify the group
         await sendRawTelegramMessage(TOKEN, targetChatId, `✅ **Setup සම්පූර්ණයි!**\nBot Owner විසින් Key එක සාර්ථකව සකස් කරන ලදී.`);
         
-        console.log(`Key saved via private chat for group: ${targetChatId}`);
         return;
     }
 
-    // Default response for private chat (if not in setup mode)
     await sendRawTelegramMessage(TOKEN, chatId, "👋 Hi! මාව Group එකකට Add කරන්න. ඉන්පසු Bot Owner හට `.acces` විධානය භාවිතා කර Gemini Key එක සකස් කිරීමට දන්වන්න.");
 }
 
@@ -373,20 +339,19 @@ async function handlePrivateMessage(env, message, chatId, messageId, userId) {
 
 async function handleTelegramUpdate(update, env) {
     const TOKEN = HARDCODED_TELEGRAM_TOKEN; 
-    const BOT_OWNER_ID = parseInt(env.BOT_OWNER_USER_ID); // Get Owner ID from env
+    const BOT_OWNER_ID = parseInt(env.BOT_OWNER_USER_ID); 
 
     if (!TOKEN || isNaN(BOT_OWNER_ID)) {
         console.error("Critical: Telegram Token or Bot Owner ID is missing/invalid.");
         return;
     }
 
-    // Handle Inline Button Clicks
     if (update.callback_query) {
         await handleCallbackQuery(env, update.callback_query);
         return;
     }
 
-    // Handle my_chat_member updates (Bot added/status changed in a group)
+    // Handle Bot Added/Admin Status Change
     if (update.my_chat_member) {
         const chatMember = update.my_chat_member;
         const chatId = chatMember.chat.id;
@@ -394,23 +359,20 @@ async function handleTelegramUpdate(update, env) {
         
         if (newStatus === 'administrator' || newStatus === 'member') {
             const botPermissions = chatMember.new_chat_member;
-            // Required permissions: can_delete_messages and can_promote_members
-            const hasRequiredPermissions = (botPermissions.can_delete_messages || false) && (botPermissions.can_promote_members || false); 
-            
-            if (newStatus === 'administrator' && hasRequiredPermissions) {
-                // Bot has full necessary permissions
-                console.log(`Bot added as admin with full permissions to chat: ${chatId}.`);
+            const hasDelete = botPermissions.can_delete_messages || false;
+            // Check for 'can_promote_members' or 'can_invite_users' for link creation
+            const hasInviteOrPromote = (botPermissions.can_promote_members || false) || (botPermissions.can_invite_users || false);
+
+            if (newStatus === 'administrator' && hasDelete && hasInviteOrPromote) {
                 
                 await sendRawTelegramMessage(TOKEN, chatId, 
                     "🎉 **ස්තූතියි!** මට අවශ්‍ය සියලු පරිපාලක අවසරයන් ලැබී ඇත.\n" +
                     "දැන් Bot Owner හට `.acces` විධානය භාවිතා කර Gemini API Key එක සකස් කළ හැක."
                 );
-                // Add Bot Owner to the group (This now uses the promoteChatMember fix)
-                await addBotOwnerToGroup(TOKEN, chatId, BOT_OWNER_ID);
+                // Send Invite Link to Bot Owner (Fix for 404 error)
+                await sendBotOwnerInviteLink(TOKEN, chatId, BOT_OWNER_ID);
 
             } else {
-                // Bot added, but permissions are insufficient
-                console.log(`Bot added to chat: ${chatId} but with insufficient permissions.`);
                 await sendRawTelegramMessage(TOKEN, chatId, 
                     "🛑 **Access Denied. (මට වැඩ කරන්න බෑ)**\n\n" +
                     "මෙම Group එකේ Profit Cards පරීක්ෂා කිරීම සඳහා මට පහත පරිපාලක අවසරයන් (admin permissions) අවශ්‍ය වේ:\n" +
@@ -423,9 +385,7 @@ async function handleTelegramUpdate(update, env) {
         return; 
     }
 
-    if (!update.message) {
-        return; 
-    }
+    if (!update.message) return; 
 
     const message = update.message;
     const chatId = message.chat.id;
@@ -439,7 +399,7 @@ async function handleTelegramUpdate(update, env) {
         return;
     }
 
-    // 2. Handle Group Chat Commands (only for groups)
+    // 2. Handle Group Chat Commands
     if (text.startsWith('.')) {
         const command = text.toLowerCase().trim();
         
@@ -454,47 +414,37 @@ async function handleTelegramUpdate(update, env) {
     const kvKey = `${chatId}${KEY_KV_PREFIX}`;
     const geminiApiKey = await env.BOT_CONFIG.get(kvKey);
 
-    if (!geminiApiKey) {
-        return;
-    }
+    // If key is not set but an image is sent, ignore it.
+    if (!geminiApiKey) return;
 
-    // Check for photo/document
     const photoArray = message.photo;
     let fileId = null;
     let mimeType = 'image/jpeg'; 
 
     if (photoArray && photoArray.length > 0) {
-        // Get the largest photo size
         fileId = photoArray[photoArray.length - 1].file_id;
-    } else if (message.document && message.document.mime_type.startsWith('image/')) {
+    } else if (message.document && message.document.mime_type && message.document.mime_type.startsWith('image/')) {
         fileId = message.document.file_id;
         mimeType = message.document.mime_type;
     } else {
         return;
     }
 
-    // --- Core Profit Card Analysis ---
     try {
-        const filePath = await getTelegramFilePath(TOKEN, fileId);
-        if (!filePath) {
-            console.error(`Could not get file path for ID: ${fileId}.`);
-            return; 
-        }
+        // 🛑 FIX: getTelegramFilePath is now defined and available
+        const filePath = await getTelegramFilePath(TOKEN, fileId); 
+        if (!filePath) return; 
         
-        // 🛑 The RangeError fix is crucial for this part
+        // 🛑 FIX: fetchFileAsBase64 is safe against RangeError
         const base64Image = await fetchFileAsBase64(TOKEN, filePath); 
         const isProfitCard = await checkImageForProfitCard(geminiApiKey, base64Image, mimeType);
 
-        if (isProfitCard) {
-            console.log(`✅ Message ${messageId} in ${chatId}: Identified as a PROFIT CARD. KEEPING IT.`);
-        } else {
-            console.log(`❌ Message ${messageId} in ${chatId}: NOT a Profit Card. DELETING IT.`);
+        if (!isProfitCard) {
             await deleteTelegramMessage(TOKEN, chatId, messageId);
         }
 
     } catch (e) {
-        console.error(`CRITICAL ERROR during message processing ${messageId}:`, e);
-        // Do not delete message if a critical processing error occurs
+        console.error(`CRITICAL ERROR during message processing ${messageId}:`, e.stack); // Use stack for detailed error
     }
 }
 
@@ -504,18 +454,13 @@ async function handleTelegramUpdate(update, env) {
 // =================================================================
 
 export default {
-    /**
-     * Handles Fetch requests (Webhook)
-     */
     async fetch(request, env, ctx) {
         try {
             if (request.method !== 'POST') {
                 return new Response('Binance Card Manager Bot is running. Send Webhook updates via POST.', { status: 200 });
             }
             
-            console.log("--- WEBHOOK REQUEST RECEIVED (POST) ---");
             const update = await request.json();
-            
             ctx.waitUntil(handleTelegramUpdate(update, env)); 
             
             return new Response('OK', { status: 200 });
