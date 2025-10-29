@@ -1,524 +1,292 @@
-// required libraries
-import { load } from 'cheerio';
-import moment from 'moment-timezone';
+// --- ES MODULE IMPORTS (Required for Cloudflare Workers) ---
+import { load } from 'cheerio'; 
 
-// 🛑 CONSTANTS
-const BOT_TOKEN = "5389567211:AAG0ksuNyQ1AN0JpcZjBhQQya9-jftany2A";
-const CHAT_ID = "-1003111341307";
-const FOREX_URL = "https://www.forexfactory.com/calendar";
-const TELEGRAM_API_URL = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`; 
-const TIMEZONE = 'Asia/Colombo'; // ශ්‍රී ලංකා වේලා කලාපය (GMT+05:30)
+// =================================================================
+// --- 🔴 HARDCODED CONFIGURATION (KEYS INSERTED DIRECTLY) 🔴 ---
+// ⚠️ WARNING: THIS IS HIGHLY INSECURE. USE CLOUDFLARE SECRETS IN PRODUCTION.
+// =================================================================
 
-const UPCOMING_KEY = 'SENT_UPCOMING_IDS'; 
-const COMPLETED_KEY = 'LAST_COMPLETED_ID';
+const HARDCODED_CONFIG = {
+    // 🛑 ඔබේ සත්‍ය දත්ත මගින් ප්‍රතිස්ථාපනය කරන්න
+    TELEGRAM_TOKEN: '8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8', // ⬅️ Replace with your BOT TOKEN
+    MAIN_CHAT_ID: '-1003111341307',                 // ⬅️ Replace with your TARGET GROUP/CHANNEL ID
+    GEMINI_API_KEY: 'AIzaSyAdoKzVMv1VZK885fuID9CEpdc37SD7cgw', // ⬅️ Replace with your GEMINI KEY
+};
 
-// --- Shared Helper Functions ---
+// =================================================================
+// --- ⚙️ CONSTANTS (Uses HARDCODED_CONFIG) ⚙️ ---
+// =================================================================
 
-/**
- * Impact Level අනුව Telegram පණිවිඩය සඳහා අවශ්‍ය පාඨය සකස් කරයි.
- */
-function getImpactLevel(impact) {
-    switch (impact) {
-        case "High Impact Expected":
-            return "🔴 High";
-        case "Medium Impact Expected":
-            return "🟠 Medium";
-        case "Low Impact Expected":
-            return "🟢 Low";
-        default:
-            return "⚪ Unknown";
-    }
-}
+// Constants for Image Analysis
+const MAX_FILE_SIZE_MB = 20; 
+const GEMINI_VISION_MODEL = 'gemini-2.5-flash';
+
+// --- UTILITY CONSTANTS ---
+const TELEGRAM_API_BASE_URL = 'https://api.telegram.org/bot';
+
+// =================================================================
+// --- UTILITY FUNCTIONS ---
+// =================================================================
 
 /**
- * Actual අගය Previous අගය සමග සංසන්දනය කර වෙළඳපොළ පුරෝකථනය ලබා දෙයි.
+ * Sends a message to Telegram.
  */
-function analyzeComparison(actual, previous) {
-    try {
-        // Actual/Previous වල ඇති % සලකුණු සහ අනෙකුත් අකුරු ඉවත් කර සංඛ්‍යා ලෙස පාර්ස් කිරීම
-        const a = parseFloat(actual.replace(/[^0-9.-]/g, ''));
-        const p = parseFloat(previous.replace(/[^0-9.-]/g, ''));
-
-        if (isNaN(a) || isNaN(p)) {
-            throw new Error("Invalid number format");
-        }
-        
-        if (a > p) {
-            return {
-                comparison: `පෙර දත්තවලට වඩා ඉහළයි (${actual})`,
-                reaction: "📉 Forex සහ Crypto වෙළඳපොළ පහළට යා හැකියි"
-            };
-        } else if (a < p) {
-            return {
-                comparison: `පෙර දත්තවලට වඩා පහළයි (${actual})`,
-                reaction: "📈 Forex සහ Crypto වෙළඳපොළ ඉහළට යා හැකියි"
-            };
-        } else {
-            return {
-                comparison: `පෙර දත්තවලට සමානයි (${actual})`,
-                reaction: "⚖ Forex සහ Crypto වෙළඳපොළ ස්ථාවරයෙහි පවතී"
-            };
-        }
-    } catch (error) {
-        return {
-            comparison: `Actual: ${actual}`,
-            reaction: "🔍 වෙළඳපොළ ප්‍රතිචාර අනාවැකි කළ නොහැක"
-        };
-    }
-}
-
-/**
- * HTML එකෙන් Event විස්තර ලබා ගැනීමේ පොදු Logic එක.
- */
-function extractEventDetails(row) {
-    const eventId = row.attr('data-event-id');
-    const currency = row.find('.calendar__currency').text().trim();
-    const title = row.find('.calendar__event').text().trim();
-    const actual = row.find('.calendar__actual').text().trim();
-    const forecast = row.find('.calendar__forecast').text().trim();
-    const previous = row.find('.calendar__previous').text().trim() || "0";
-    const timeStr = row.find('.calendar__time').text().trim();
-
-    // Impact Extraction
-    const impactSpan = row.find('.calendar__impact').find('span');
-    let impact = impactSpan.attr('title');
-
-    if (!impact || impact.trim() === '') {
-        const classAttr = impactSpan.attr('class') || '';
-        if (classAttr.includes('ff-impact-red')) {
-            impact = "High Impact Expected";
-        } else if (classAttr.includes('ff-impact-ora')) {
-            impact = "Medium Impact Expected";
-        } else if (classAttr.includes('ff-impact-yel')) {
-            impact = "Low Impact Expected";
-        } else {
-            impact = "Unknown";
-        }
-    }
-    impact = impact || "Unknown";
-
-    if (!eventId || !currency || !title) return null;
-
-    return {
-        id: eventId,
-        currency: currency,
-        title: title,
-        timeStr: timeStr,
-        actual: actual,
-        forecast: forecast,
-        previous: previous,
-        impact: impact
+async function sendRawTelegramMessage(chatId, message, replyToId = null) {
+    const TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
+    const apiURL = `${TELEGRAM_API_BASE_URL}${TOKEN}/sendMessage`;
+    const payload = { 
+        chat_id: chatId, 
+        text: message, 
+        parse_mode: 'HTML', 
+        reply_to_message_id: replyToId,
+        allow_sending_without_reply: true
     };
-}
-
-// --- Upcoming Events Logic (Final Robust Fix: 5 Hour Window) ---
-
-/**
- * ඊළඟ මිනිත්තු 305 (පැය 5 යි විනාඩි 5) තුළ ඇති සිදුවීම් සොයා ගනී.
- */
-async function getUpcomingEvents() {
-    try {
-        const response = await fetch(FOREX_URL, { headers: { 'User-Agent': 'Cloudflare Worker Scraper' } });
-        if (!response.ok) return [];
-        
-        const html = await response.text();
-        const $ = load(html);
-        const rows = $('.calendar__row');
-        const upcomingEvents = [];
-        
-        const currentTime = moment().tz(TIMEZONE);
-        // 🛑 Alert Window: පැය 5 යි විනාඩි 5 (305 minutes) - සිදුවීම ආරම්භ වන මොහොත දක්වා
-        const timeWindowEnd = currentTime.clone().add(305, 'minutes'); 
-        
-        // Date Context: අද දින ලෙස ආරම්භ කරයි
-        let currentDateContext = currentTime.clone().startOf('day'); 
-
-        rows.each((i, el) => {
-            const row = $(el);
-            const rowClass = row.attr('class') || '';
-
-            // 1. Handle Date Rows: Update the current date context
-            if (rowClass.includes('calendar__row--date')) {
-                 const dateText = row.find('.calendar__cell').text().trim();
-                 
-                 let parsedDate;
-                 
-                 // 🛑 "Today" සහ "Tomorrow" Handling
-                 if (dateText.includes('Today')) {
-                     parsedDate = currentTime.clone().startOf('day');
-                 } else if (dateText.includes('Tomorrow')) {
-                     parsedDate = currentTime.clone().add(1, 'day').startOf('day');
-                 } else {
-                     // සාමාන්‍ය Date Parsing: "Mon, Oct 20"
-                     parsedDate = moment.tz(dateText, "ddd, MMM DD", TIMEZONE);
-                     
-                     if (parsedDate.isValid()) {
-                         // Year එක අනිවාර්යයෙන්ම Current Year එකට Set කිරීම
-                         parsedDate.year(currentTime.year());
-                         
-                         // වසරක් ඈතට ගොස් ඇති බව පෙනේ නම් (වසර වෙනස් වීමේදී), එය නිවැරදි කිරීම
-                         if (parsedDate.isBefore(currentTime.clone().subtract(30, 'days'))) {
-                             parsedDate.add(1, 'year');
-                         }
-                     }
-                 }
-                 
-                 if (parsedDate && parsedDate.isValid()) {
-                     currentDateContext = parsedDate.startOf('day');
-                 }
-                 return; // Date rows මග හැරීම
-            }
-
-            const details = extractEventDetails(row);
-            
-            // 2. Initial Checks
-            if (!details) return;
-            // Completed නම් මග හැරීම
-            if (details.actual && details.actual !== "-") return; 
-            // Time නැතිනම් මග හැරීම
-            if (!details.timeStr || details.timeStr === 'All Day') return; 
-
-            let scheduledTime;
-            try {
-                // 3. Robust Time Combination and Parsing
-                const dateString = currentDateContext.format('YYYY-MM-DD');
-                const timeString = details.timeStr;
-
-                // Combine date context and time string
-                // Date String එකේ Year එක නිවැරදි නිසා, Timezone එකට අනුව පාර්ස් කරයි
-                scheduledTime = moment.tz(`${dateString} ${timeString}`, 'YYYY-MM-DD h:mma', TIMEZONE);
-
-                if (!scheduledTime.isValid()) {
-                    console.warn(`Time parse warning for ${details.title}: Time string "${timeString}" on date "${dateString}" is invalid. Skipping.`);
-                    return; 
-                }
-                
-                // 4. Time Validation and Filtering
-                
-                // Past Margin එක විනාඩි 5ක් අතීතයට ගැනීම (පැරණි සිදුවීම් මග හැරීමට)
-                const pastMargin = currentTime.clone().subtract(5, 'minutes'); 
-                
-                // [DEBUG] Log:
-                console.log(`[DEBUG] Checking event: ${details.title}. Scheduled: ${scheduledTime.format('YYYY-MM-DD HH:mm:ss')}, Current: ${currentTime.format('YYYY-MM-DD HH:mm:ss')}. TimeWindowEnd: ${timeWindowEnd.format('YYYY-MM-DD HH:mm:ss')}`);
-
-                // 5. Final Condition Check: සිදුවීම [Past Margin, Time Window End] අතර තිබිය යුතුය
-                // මෙය 'පැය 5ක් ඇතුළත' යන කොන්දේසිය තෘප්ත කරයි.
-                if (scheduledTime.isSameOrAfter(pastMargin) && scheduledTime.isBefore(timeWindowEnd)) {
-                    upcomingEvents.push({
-                        ...details,
-                        // Full date/time එකම pass කරමු, timeStr වෙනුවට
-                        scheduledTimeFull: scheduledTime.format('YYYY-MM-DD HH:mm:ss'), 
-                        scheduledTime: scheduledTime.format('HH:mm:ss'), 
-                    });
-                     // [FOUND] Log
-                    console.log(`[FOUND] Upcoming event (within 5H window): ${details.title} at ${scheduledTime.format('YYYY-MM-DD HH:mm:ss')}`);
-                }
-            } catch (e) {
-                console.error(`Fatal Time parsing error for ${details.title}:`, e.message);
-            }
-        });
-        
-        return upcomingEvents;
-    } catch (error) {
-        console.error("Error fetching or parsing data for upcoming events:", error.message);
-        return [];
-    }
-}
-
-/**
- * Upcoming Alert පණිවිඩය යවයි.
- */
-async function sendUpcomingAlert(event) {
-    const impactLevel = getImpactLevel(event.impact);
-
-    // වේලාවට ඉතිරි කාලය ගණනය කිරීම
-    const now = moment().tz(TIMEZONE);
-    // 🛑 Full Date/Time භාවිතා කිරීම (event.scheduledTimeFull)
-    const eventDateTime = moment.tz(event.scheduledTimeFull, 'YYYY-MM-DD HH:mm:ss', TIMEZONE);
     
-    const timeRemaining = moment.duration(eventDateTime.diff(now));
-    
-    const remainingText = timeRemaining.asMilliseconds() > 0 
-        ? `${Math.floor(timeRemaining.asHours())}h ${timeRemaining.minutes()}m` 
-        : 'now';
-
-
-    const msg = `🔔 *Upcoming Economic Alert* 🔔
-
-⏰ *Scheduled Time (Colombo):* ${eventDateTime.format('YYYY-MM-DD HH:mm:ss')}
-⏳ *Time Remaining:* ${remainingText}
-
-🌍 *Currency:* ${event.currency}
-
-📌 *Headline:* ${event.title}
-
-🔥 *Impact:* ${impactLevel}
-
-🔮 *Forecast:* ${event.forecast || 'N/A'}
-
-🚀 *Dev : Mr Chamo 🇱🇰*`;
-
     try {
-        const payload = { chat_id: CHAT_ID, text: msg, parse_mode: "Markdown" };
-        const response = await fetch(TELEGRAM_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Telegram API failed (Upcoming): ${response.status} - ${errorText}`);
-        }
-        return true;
-    } catch (error) {
-        console.error("Error sending Telegram message (Upcoming):", error.message);
-        return false;
-    }
-}
-
-// --- Completed Events Logic (No Change) ---
-
-/**
- * නවතම සම්පූර්ණ කළ සිදුවීම සොයා ගනී.
- */
-async function getLatestCompletedEvent() {
-    try {
-        const response = await fetch(FOREX_URL, { headers: { 'User-Agent': 'Cloudflare Worker Scraper' } });
-        if (!response.ok) return null;
-        
-        const html = await response.text();
-        const $ = load(html);
-        const rows = $('.calendar__row');
-
-        // පිටුපසින් ඉදිරියට ගොස් නවතම Actual අගය සහිත සිදුවීම සොයයි
-        for (let i = rows.length - 1; i >= 0; i--) {
-            const row = rows.eq(i);
-            const details = extractEventDetails(row);
-
-            // Actual අගය හිස් නොවන හෝ '-' නොවන සිදුවීම් තෝරා ගැනීම
-            if (details && details.actual && details.actual !== "-") {
-                return details;
-            }
-        }
-        return null;
-    } catch (error) {
-         console.error("Error fetching or parsing data for completed events:", error.message);
-        return null;
-    }
-}
-
-/**
- * Completed News පණිවිඩය යවයි.
- */
-async function sendCompletedNews(event) {
-    const now = moment().tz(TIMEZONE).format('YYYY-MM-DD HH:mm:ss');
-    const impactLevel = getImpactLevel(event.impact);
-    const { comparison, reaction } = analyzeComparison(event.actual, event.previous);
-
-    const msg = `🛑 *Breaking News* 📰
-
-⏰ *Date & Time:* ${now}
-
-🌍 *Currency:* ${event.currency}
-
-📌 *Headline:* ${event.title}
-
-🔥 *Impact:* ${impactLevel}
-
-📈 *Actual:* ${event.actual}
-📉 *Previous:* ${event.previous}
-
-🔍 *Details:* ${comparison}
-
-📈 *Market Reaction Forecast:* ${reaction}
-
-🚀 *Dev : Mr Chamo 🇱🇰*`;
-
-    try {
-        const payload = { chat_id: CHAT_ID, text: msg, parse_mode: "Markdown" };
-        const response = await fetch(TELEGRAM_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Telegram API failed (Completed): ${response.status} - ${errorText}`);
-        }
-        return true;
-    } catch (error) {
-        console.error("Error sending Telegram message (Completed):", error.message);
-        return false;
-    }
-}
-
-// --- Status Check Logic (No Change) ---
-
-/**
- * KV Store එකේ තත්ත්වය සහ ID පෙන්වයි.
- */
-async function handleStatusRequest(env) {
-    const kvStore = env.FOREX_HISTORY;
-
-    if (!kvStore) {
-        return new Response("KV Binding Error: FOREX_HISTORY is missing.", { status: 500 });
-    }
-
-    try {
-        const lastCompletedId = await kvStore.get(COMPLETED_KEY);
-        const sentUpcomingIdsJson = await kvStore.get(UPCOMING_KEY);
-        const sentUpcomingIds = sentUpcomingIdsJson ? JSON.parse(sentUpcomingIdsJson) : {};
-
-        let upcomingList = '';
-        for (const id in sentUpcomingIds) {
-            const timestamp = moment.unix(sentUpcomingIds[id]).tz(TIMEZONE).format('YYYY-MM-DD HH:mm:ss');
-            upcomingList += `  "${id}": "${timestamp}"\n`;
-        }
-
-        let statusHtml = `
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Forex Bot Status</title>
-                <style>
-                    body { font-family: Arial, sans-serif; background-color: #f4f4f4; color: #333; margin: 20px; }
-                    .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); }
-                    h1 { color: #28a745; }
-                    h2 { color: #007bff; border-bottom: 2px solid #007bff; padding-bottom: 5px; margin-top: 20px; }
-                    pre { background-color: #eee; padding: 15px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; font-size: 14px; }
-                    .success { color: green; font-weight: bold; }
-                    .error { color: red; font-weight: bold; }
-                    .info { color: #6c757d; }
-                    a { color: #007bff; text-decoration: none; }
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <h1>Forex Alert Worker Status</h1>
-                    <p>Current Time (Sri Lanka): <span class="info">${moment().tz(TIMEZONE).format('YYYY-MM-DD HH:mm:ss')}</span></p>
-
-                    <h2>Last Completed Event ID (Breaking News)</h2>
-                    <p>ID: <span class="${lastCompletedId ? 'success' : 'error'}">${lastCompletedId || 'N/A (KV is empty)'}</span></p>
-
-                    <h2>Sent Upcoming Event IDs (${Object.keys(sentUpcomingIds).length} Total)</h2>
-                    <pre>{
-${upcomingList}
-}</pre>
-                    <p class="info"><i>IDs are cleaned up after 24 hours. Times are in Sri Lanka Time.</i></p>
-                    
-                    <h2>Manual Trigger and Functions</h2>
-                    <p>Run Logic Now: <a href="/trigger" target="_blank">/trigger</a></p>
-                    <p>Check Status: <a href="/status" target="_blank">/status</a> (You are here)</p>
-                </div>
-            </body>
-            </html>
-        `;
-
-        return new Response(statusHtml, {
-            headers: { 'Content-Type': 'text/html' },
+        const response = await fetch(apiURL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
-
+        return response.ok;
     } catch (e) {
-        console.error("Error reading KV for status:", e.message);
-        return new Response(`Error reading KV: ${e.message}`, { status: 500 });
+        console.error("Error sending message to Telegram:", e);
+        return false;
+    }
+}
+
+/**
+ * Deletes a message from the specified chat.
+ */
+async function deleteTelegramMessage(chatId, messageId) {
+    const TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
+    const apiURL = `${TELEGRAM_API_BASE_URL}${TOKEN}/deleteMessage`;
+    const payload = {
+        chat_id: chatId,
+        message_id: messageId
+    };
+
+    try {
+        const response = await fetch(apiURL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.warn(`Failed to delete message ${messageId} in ${chatId}: ${response.status} - ${errorText}`);
+        }
+        return response.ok;
+    } catch (e) {
+        console.error("Error deleting message from Telegram:", e);
+        return false;
+    }
+}
+
+/**
+ * Retrieves the file path from Telegram using the file_id.
+ */
+async function getTelegramFilePath(fileId) {
+    const TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
+    const url = `${TELEGRAM_API_BASE_URL}${TOKEN}/getFile?file_id=${fileId}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    if (data.ok && data.result) {
+        const fileSizeMB = data.result.file_size / (1024 * 1024);
+        if (fileSizeMB > MAX_FILE_SIZE_MB) {
+            console.warn(`File size (${fileSizeMB.toFixed(2)}MB) exceeds maximum limit (${MAX_FILE_SIZE_MB}MB).`);
+            return null;
+        }
+        return data.result.file_path;
+    }
+    return null;
+}
+
+/**
+ * Downloads the file and converts it to a Base64 string.
+ */
+async function fetchFileAsBase64(filePath) {
+    const TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
+    const fileUrl = `https://api.telegram.org/file/bot${TOKEN}/${filePath}`;
+    const response = await fetch(fileUrl);
+
+    if (!response.ok) {
+        throw new Error(`Failed to fetch file: ${response.statusText}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    // Convert ArrayBuffer to Base64
+    return btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+}
+
+
+// =================================================================
+// --- GEMINI AI VISION INTEGRATION (CORE LOGIC) ---
+// =================================================================
+
+/**
+ * Uses Gemini Vision to check if the image is a Binance/Crypto Profit Card.
+ * Returns true if it is, false otherwise.
+ */
+async function checkImageForProfitCard(base64Image, mimeType = 'image/jpeg') {
+    const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
+
+    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU') {
+        console.error("Gemini AI: API Key is missing or placeholder.");
+        return false; 
+    }
+
+    const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_VISION_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+    
+    const prompt = `You are a strict Telegram moderator bot. Analyze the image. Is this a screenshot of a completed trade (Profit/Loss Card) from a major crypto exchange like Binance, Bybit, or OKX? Specifically, look for clear indicators like 'USDT Perpetual', '+[number] USDT', 'Entry Price', 'Last Price', and a referral code. Answer STRICTLY with only ONE word: 'YES' or 'NO'. Do not add any explanation or punctuation.`;
+
+    const payload = {
+        contents: [{ 
+            parts: [
+                {
+                    inlineData: {
+                        mimeType: mimeType,
+                        data: base64Image
+                    }
+                },
+                { text: prompt }
+            ] 
+        }],
+    };
+
+    try {
+        const response = await fetch(GEMINI_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`Gemini API Error: ${response.status} - ${errorText}`);
+            // AI call fails, assume it's NOT a card to prevent accidental deletion of valid content.
+            return false;
+        }
+
+        const result = await response.json();
+        const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text?.toUpperCase().trim();
+        
+        console.log(`Gemini Vision Response: ${textResponse}`);
+
+        return textResponse === 'YES';
+        
+    } catch (error) {
+        console.error("Gemini Vision failed:", error.message);
+        return false;
     }
 }
 
 
-// 🛑 ප්‍රධාන Logic කොටස
-async function mainLogic(env) {
-    const kvStore = env.FOREX_HISTORY; 
+// =================================================================
+// --- TELEGRAM WEBHOOK HANDLER (MAIN LOGIC) ---
+// =================================================================
 
-    // KV Binding ගැටලුව සඳහා ආරක්ෂාව
-    if (!kvStore) {
-        console.error("KV Binding Error: env.FOREX_HISTORY is undefined. Check wrangler.toml and Dashboard bindings.");
+async function handleTelegramUpdate(update) {
+    // Configuration values are read directly from the hardcoded object
+    const TOKEN = HARDCODED_CONFIG.TELEGRAM_TOKEN;
+    const CHAT_ID = HARDCODED_CONFIG.MAIN_CHAT_ID;
+
+    // 1. Basic checks
+    if (!TOKEN || !CHAT_ID || !update.message) {
+        return; 
+    }
+
+    const message = update.message;
+    const chatId = message.chat.id;
+    const messageId = message.message_id;
+
+    // Check if the message is from the target group
+    if (String(chatId) !== String(CHAT_ID)) {
+         console.info(`Ignoring message from chat ID: ${chatId}. Not the target group.`);
+         return;
+    }
+
+
+    // 2. Check for a photo or image document
+    const photoArray = message.photo;
+    let fileId = null;
+    let mimeType = 'image/jpeg'; 
+
+    if (photoArray && photoArray.length > 0) {
+        // Get the largest image size (last element in the array)
+        fileId = photoArray[photoArray.length - 1].file_id;
+    } else if (message.document && message.document.mime_type.startsWith('image/')) {
+        // Handle images sent as documents (sometimes happens)
+        fileId = message.document.file_id;
+        mimeType = message.document.mime_type;
+    } else {
+        // Not a photo/image, so we ignore it (don't delete)
+        console.info(`Message ${messageId} is not a photo/image. Ignoring.`);
         return;
     }
 
+    // --- Core Profit Card Analysis ---
     try {
-        // --- 1. Upcoming Alerts Logic ---
-        
-        const upcomingEvents = await getUpcomingEvents();
-        let sentUpcomingIdsJson = await kvStore.get(UPCOMING_KEY);
-        let sentUpcomingIds = sentUpcomingIdsJson ? JSON.parse(sentUpcomingIdsJson) : {};
-        let newAlertsSent = false;
-        
-        if (upcomingEvents.length > 0) {
-            for (const event of upcomingEvents) {
-                if (!sentUpcomingIds[event.id]) {
-                    console.log("Found NEW upcoming event. Attempting to send to Telegram:", event.id, event.title);
-                    const success = await sendUpcomingAlert(event);
-                    if (success) {
-                        sentUpcomingIds[event.id] = moment().tz(TIMEZONE).unix();
-                        newAlertsSent = true;
-                    }
-                }
-            }
+        // 3. Get the file path (uses hardcoded token internally)
+        const filePath = await getTelegramFilePath(fileId);
+        if (!filePath) {
+            console.error(`Could not get file path for ID: ${fileId}.`);
+            return; 
         }
+        
+        // 4. Download and convert to Base64 (uses hardcoded token internally)
+        const base64Image = await fetchFileAsBase64(filePath);
 
-        // KV Update (Upcoming)
-        if (newAlertsSent || Object.keys(sentUpcomingIds).length > 0) {
-            // පැය 24 කට වඩා පැරණි ID ඉවත් කිරීම
-            const yesterday = moment().tz(TIMEZONE).subtract(1, 'day').unix();
-            for (const id in sentUpcomingIds) {
-                if (sentUpcomingIds[id] < yesterday) {
-                    delete sentUpcomingIds[id];
-                }
-            }
-            await kvStore.put(UPCOMING_KEY, JSON.stringify(sentUpcomingIds));
+        // 5. Ask Gemini Vision (uses hardcoded key internally)
+        const isProfitCard = await checkImageForProfitCard(base64Image, mimeType);
+
+        // 6. Action based on AI result
+        if (isProfitCard) {
+            console.log(`✅ Message ${messageId}: Identified as a PROFIT CARD. KEEPING IT.`);
         } else {
-             console.log("No new upcoming alerts to send.");
-        }
-
-        // --- 2. Completed News Logic ---
-
-        const completedEvent = await getLatestCompletedEvent();
-
-        if (completedEvent) {
-            const lastCompletedId = await kvStore.get(COMPLETED_KEY);
-            
-            if (lastCompletedId !== completedEvent.id) {
-                console.log("Found NEW completed event. Attempting to send to Telegram:", completedEvent.id);
-                
-                const success = await sendCompletedNews(completedEvent);
-                
-                if (success) {
-                    // නව ID එක KV එකට ලිවීම
-                    await kvStore.put(COMPLETED_KEY, completedEvent.id);
-                    console.log(`Successfully saved NEW completed event ID ${completedEvent.id} to KV.`);
-                }
-            } else {
-                 console.log(`Completed event ${completedEvent.id} already sent. Skipping.`);
-            }
-
-        } else {
-            console.log("No new completed event found.");
+            console.log(`❌ Message ${messageId}: NOT a Profit Card. DELETING IT.`);
+            // 7. Delete the message (uses hardcoded token internally)
+            await deleteTelegramMessage(chatId, messageId);
         }
 
     } catch (e) {
-        console.error("Main logic error (General):", e.message);
+        console.error(`CRITICAL ERROR during message processing ${messageId}:`, e);
     }
 }
 
-// 🛑 CLOUDFLARE WORKER EXPORT
-export default {
-    
-    async fetch(request, env, ctx) {
-        const url = new URL(request.url);
-        
-        // --- Status Check (/status or ?status) ---
-        if (url.pathname === '/status' || url.search === '?status') {
-            return handleStatusRequest(env);
-        }
-        
-        // --- Manual Trigger (Root / or /trigger) ---
-        if (url.pathname === '/' || url.pathname === '/trigger') {
-            ctx.waitUntil(mainLogic(env));
-            return new Response("Forex Scraper Logic initiated successfully via HTTP request. Check logs for results or /status for KV data.", { status: 200 });
-        }
-        
-        // වෙනත් Path සඳහා
-        return new Response("404 Not Found. Use the root URL, /trigger or /status.", { status: 404 });
-    },
 
-    // --- Cron Trigger ---
-    async scheduled(event, env, ctx) {
-        ctx.waitUntil(mainLogic(env)); 
+// =================================================================
+// --- CLOUDFLARE WORKER HANDLERS ---
+// =================================================================
+
+export default {
+    /**
+     * Handles Fetch requests (Webhook)
+     */
+    async fetch(request, env, ctx) {
+        try {
+            const url = new URL(request.url);
+
+            if (request.method !== 'POST') {
+                return new Response('Binance Card Manager Bot is running. Send Webhook updates via POST.', { status: 200 });
+            }
+            
+            // Handle incoming Telegram Webhook updates
+            console.log("--- WEBHOOK REQUEST RECEIVED (POST) ---");
+            const update = await request.json();
+            
+            // Execute the core logic asynchronously and wait for completion
+            // Note: We don't pass 'env' as config is hardcoded.
+            ctx.waitUntil(handleTelegramUpdate(update));
+            
+            // Respond immediately to Telegram to prevent retries
+            return new Response('OK', { status: 200 });
+
+        } catch (e) {
+            console.error('[CRITICAL FETCH FAILURE]:', e.stack);
+            return new Response(`Worker threw an unhandled exception: ${e.message}.`, { status: 500 });
+        }
     }
 };
