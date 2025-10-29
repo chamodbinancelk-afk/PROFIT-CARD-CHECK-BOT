@@ -149,7 +149,7 @@ async function checkImageForProfitCard(base64Image, mimeType = 'image/jpeg') {
     const GEMINI_API_KEY = HARDCODED_CONFIG.GEMINI_API_KEY;
 
     // Check for missing or placeholder key
-    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'AIzaSyDDmFq7B3gTazrcrI_J4J7VhB9YdFyTCaU') {
+    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'AIzaSyAdoKzVMv1VZK885fuID9CEpdc37SD7cgw') {
         console.error("Gemini AI: API Key is missing or placeholder. CHECK HARDCODED_CONFIG!");
         return false; 
     }
