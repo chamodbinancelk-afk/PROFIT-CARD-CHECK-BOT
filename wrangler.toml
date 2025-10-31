@@ -12,7 +12,15 @@ id = "ec6bc090856641e9b2aca785d7a34727"  # 🛑 REPLACE WITH YOUR KV NAMESPACE I
 
 [vars]
 # We remove BOT_OWNER_USER_ID from JS and put it here
-BOT_OWNER_USER_ID = 1901997764 # 🛑 REPLACE WITH YOUR ACTUAL TELEGRAM USER ID
+BOT_OWNER_USER_ID = 1901997764 
+
+[observability]
+[observability.logs]
+enabled = false
+head_sampling_rate = 1
+invocation_logs = true
+persist = true
+# 🛑 REPLACE WITH YOUR ACTUAL TELEGRAM USER ID
 
 # You can also move the Telegram Token here if you prefer to see it in wrangler.toml
 # TELEGRAM_TOKEN = "8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8"
